@@ -52,7 +52,7 @@ description: What this skill does and when to use it
 ---
 ```
 
-The base model covers 15 general programming domains + 23 languages/frameworks/actions out of the box. For domain-specific skills (lark, firecrawl, medical, finance, etc.), add your own keywords:
+The base model covers 17 general programming domains + 29 languages/frameworks/actions out of the box. For domain-specific skills (lark, firecrawl, medical, finance, etc.), add your own keywords:
 
 ```python
 router = SkillRouter()
@@ -62,7 +62,9 @@ f.PRECISE["medical"] = ["fda", "clinical", "drug", "药品", "临床"]
 router.build(["./my-skills/"])
 ```
 
-Or use the [extras template](extras_template.py).
+Or use the [extras template](extras_template.py). A real-world ECC skill set example (314 skills → 65% Hit@1) is at [extras/extras_ecc.py](extras/extras_ecc.py).
+
+**Aim for features ≥ sqrt(skills)** — 150 skills need ~80 features, 300 need ~120+.
 
 ## Performance
 
