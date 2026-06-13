@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "neuro-skill"
+version = "0.2.0"
+description = "Zero-cost hybrid skill router for AI agents — graph spreading activation + cosine similarity + keyword fusion"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=2.0",
+    "pyyaml>=6.0",
+    "scikit-learn>=1.3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-cov"]
+
+[project.scripts]
+neuro-skill = "neuro_skill.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["neuro_skill*"]
