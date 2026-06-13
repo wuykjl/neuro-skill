@@ -5,7 +5,7 @@ Skill 索引构建器
   1. 特征矩阵 F: N × total_features (broad + precise)
   2. 技能相似度图 G: N × N (cosine on F, row-normalized)
   3. 三维张量 X: N × N × 3 (domain/language/action Jaccard)
-  4. CP 张量分解因子矩阵 (可选，用于张量增强路由)
+  4. CP 张量分解因子矩阵 (可选,用于张量增强路由)
 """
 
 import time
@@ -78,7 +78,7 @@ def _build_feature_matrix(skills: list[dict]) -> tuple[np.ndarray, dict]:
 
 
 def _build_graph(F: np.ndarray) -> np.ndarray:
-    """构建技能相似度图 (行归一化)，用于扩散激活"""
+    """构建技能相似度图 (行归一化),用于扩散激活"""
     norms = np.linalg.norm(F, axis=1, keepdims=True)
     norms[norms < 1e-10] = 1.0
     F_norm = F / norms
@@ -109,7 +109,7 @@ def _build_tensor(skills: list[dict], skill_feats: list) -> np.ndarray:
 def cp_decomposition(X: np.ndarray, rank: int = 8,
                      max_iter: int = 100, tol: float = 1e-5) -> tuple:
     """
-    CP 张量分解 (ALS)。
+    CP 张量分解 (ALS).
 
     返回: (weights: (R,), factors: [A(N×R), B(N×R), C(D×R)])
     """
@@ -179,9 +179,9 @@ class SkillIndex:
 
     def build(self, skills: list[dict], rank: int = 8) -> dict:
         """
-        构建索引。
+        构建索引.
 
-        返回 stats dict。
+        返回 stats dict.
         """
         t0 = time.time()
         self.skills = skills

@@ -125,6 +125,17 @@ def feature_quality_report(
     max_overlap = max(len(v) for v in feat_set_to_skills.values()) if feat_set_to_skills else 0
 
     def _qs():
+        """Quality score (0-100). Weights calibrated on 270-skill benchmark:
+
+        - Coverage (max 40 pts): fraction of skills with >= 1 feature.
+          A healthy system covers 100% of skills.
+        - Diversity (max 30 pts): feature count / target (60).
+          Prevents over-reliance on too few features.
+        - Overlap penalty (max 30 pts): 30 - max_skill_overlap.
+          Punishes cases where many skills share identical feature sets
+          (low discrimination). Typical: 5-15 skills share features.
+          Severe: 50+ skills share identical features = almost zero value.
+        """
         cov_s = covered / max(N, 1) * 40
         div_s = min(1.0, len(all_names) / 60) * 30
         over_s = max(0, 30 - max_overlap)

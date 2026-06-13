@@ -15,7 +15,7 @@ import math
 import time
 import numpy as np
 from neuro_skill.features import (
-    extract_query_features, extract_skill_features, feature_set,
+    extract_query_features, extract_skill_features, feature_set, tokenize,
 )
 
 # ── 工具 ──
@@ -27,7 +27,7 @@ def _normalize(v: np.ndarray) -> np.ndarray:
 
 def _rank(skills: list[dict], scores: np.ndarray,
           top_k: int = 10) -> list[tuple[str, float, int]]:
-    """将分数排序，返回 [(name, score, idx), ...]"""
+    """将分数排序,返回 [(name, score, idx), ...]"""
     order = np.argsort(scores)[::-1][:top_k]
     return [(skills[i]["name"], float(scores[i]), int(i)) for i in order]
 
@@ -35,15 +35,11 @@ def _rank(skills: list[dict], scores: np.ndarray,
 # ── 方法 1: 关键词匹配 ──
 
 def keyword(skills: list[dict], query: str, **_kw) -> np.ndarray:
-    q_words = set(re.findall(r"\w{2,}", query.lower()))
-    q_ch = set(re.findall(r"[一-鿿]{2,6}", query))
-    all_q = q_words | q_ch
+    q_tokens = tokenize(query)
     scores = np.zeros(len(skills))
     for i, s in enumerate(skills):
-        t = s["search_text"]
-        tw = (set(re.findall(r"\w{2,}", t))
-              | set(re.findall(r"[一-鿿]{2,6}", t)))
-        scores[i] = len(all_q & tw) / max(len(all_q), 1)
+        s_tokens = tokenize(s["search_text"])
+        scores[i] = len(q_tokens & s_tokens) / max(len(q_tokens), 1)
     return scores
 
 
@@ -171,7 +167,7 @@ def hybrid(skills: list[dict], query: str,
            F: np.ndarray | None, G: np.ndarray | None,
            meta: dict | None, **kw) -> np.ndarray:
     """
-    混合路由: 余弦 + 图扩散 + 关键词 三层融合。
+    混合路由: 余弦 + 图扩散 + 关键词 三层融合.
 
     权重: cos=0.40, graph=0.40, keyword=0.20
     """

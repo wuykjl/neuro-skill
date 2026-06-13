@@ -1,8 +1,8 @@
 """
 Skill 文件解析器
 
-只提取 name + description + trigger 段（根治假阳性），
-不碰完整 body text。
+只提取 name + description + trigger 段(根治假阳性),
+不碰完整 body text.
 """
 
 import re
@@ -12,7 +12,7 @@ from typing import Optional
 
 
 def parse_frontmatter(text: str) -> tuple[dict, str]:
-    """解析 YAML frontmatter，返回 (meta, body)"""
+    """解析 YAML frontmatter,返回 (meta, body)"""
     text = text.strip()
     if text.startswith("---"):
         parts = text.split("---", 2)
@@ -43,7 +43,7 @@ def _extract_triggers(body: str) -> str:
             elif re.match(r"^\w", line.strip()):
                 in_trigger = False
 
-    # Fallback: 如果没有显式 trigger 段，提取所有 ## 标题作为语义关键词
+    # Fallback: 如果没有显式 trigger 段,提取所有 ## 标题作为语义关键词
     if not triggers:
         for line in lines:
             if re.match(r"^##\s+", line):
@@ -54,7 +54,7 @@ def _extract_triggers(body: str) -> str:
 
 def parse_skill_file(filepath: Path) -> Optional[dict]:
     """
-    解析单个 skill/agent .md 文件。
+    解析单个 skill/agent .md 文件.
 
     返回:
         {
@@ -81,7 +81,7 @@ def parse_skill_file(filepath: Path) -> Optional[dict]:
     triggers = _extract_triggers(body)
 
     # 组装 search_text: 只用 name + description + triggers
-    # 刻意不包含完整的 body text，避免假阳性
+    # 刻意不包含完整的 body text,避免假阳性
     search_text = f"{name} {description} {triggers}"
 
     return {
@@ -94,9 +94,9 @@ def parse_skill_file(filepath: Path) -> Optional[dict]:
 
 def load_skills(directories: list[str]) -> list[dict]:
     """
-    从目录列表中加载所有 skill/agent 文件。
+    从目录列表中加载所有 skill/agent 文件.
 
-    每个目录下扫描 *.md 文件。
+    每个目录下扫描 *.md 文件.
     """
     skills = []
     seen = set()

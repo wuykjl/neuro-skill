@@ -14,18 +14,28 @@ BROAD = dict(_BASE_BROAD)
 PRECISE = dict(_BASE_PRECISE)
 
 
-def _match(text: str, keyword_map: dict[str, list[str]]) -> set[str]:
-    """匹配文本中的关键词，每类别最多命中一个。
+# ── Shared tokenizer (used by both _match and routers.keyword) ──
 
-    支持:
-      - 普通子串匹配
-      - 正则模式 (以 \\b 开头的模式)
-      - 中英混合: "Go构建" → 自动尝试在 "Go" 后拼接常见中文字符
+def tokenize(text: str) -> set[str]:
+    """Split text into tokens: English words >= 2 chars + Chinese bigrams."""
+    tokens = set()
+    tokens.update(re.findall(r"\w{2,}", text.lower()))
+    tokens.update(re.findall(r"[一-鿿]{2,6}", text.lower()))
+    return tokens
+
+
+def _match(text: str, keyword_map: dict[str, list[str]]) -> set[str]:
+    """Match text against predefined keyword categories. One hit per category.
+
+    Supports:
+      - substring matching
+      - regex patterns (starting with \\b)
+      - Chinese-English mixed: "Go构建" auto-detects language features
     """
     text_lower = text.lower()
     matched = set()
 
-    # 中英混合扩展: 如果文本包含中文字符，对短英文名做拼接匹配
+    # 中英混合扩展: 如果文本包含中文字符,对短英文名做拼接匹配
     has_chinese = bool(re.search(r'[一-鿿]', text_lower))
     extra_patterns = {}
     if has_chinese:
@@ -58,8 +68,8 @@ def _match(text: str, keyword_map: dict[str, list[str]]) -> set[str]:
 
 def extract_skill_features(skill: dict) -> dict[str, set[str]]:
     """
-    从 skill 的 search_text（name + description + triggers）提取特征。
-    关键: 不在 full body 上匹配，避免假阳性。
+    从 skill 的 search_text(name + description + triggers)提取特征.
+    关键: 不在 full body 上匹配,避免假阳性.
     """
     return {
         "broad": _match(skill["search_text"], BROAD),

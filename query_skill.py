@@ -13,12 +13,14 @@ Edit extras_template.py to add your own domain keywords.
 import sys, json, time, argparse, os
 from pathlib import Path
 
-# ── Production config — edit these for your setup ──
-PROD_DIRS = [
+# ── Production config ──
+# Skill directories are read from NEURO_SKILL_DIRS env var (colon-separated),
+# or default to Claude Code standard paths.
+_DEFAULT_DIRS = ":".join([
     os.path.expanduser("~/.claude/skills/"),
     os.path.expanduser("~/.claude/agents/"),
     os.path.expanduser("~/.claude/.agents/skills/"),
-]
+])
 
 
 def _load_extras():
@@ -35,9 +37,14 @@ def get_router():
     eb, ep = _load_extras()
     BROAD.update(eb)
     PRECISE.update(ep)
+
+    # Resolve skill dirs from env or default
+    env_dirs = os.environ.get("NEURO_SKILL_DIRS", _DEFAULT_DIRS)
+    prod_dirs = [d for d in env_dirs.split(":") if d.strip()]
+
     from neuro_skill import SkillRouter
     router = SkillRouter()
-    router.build(PROD_DIRS)
+    router.build(prod_dirs)
     return router
 
 
