@@ -100,5 +100,33 @@ def test_regex_pattern():
 
 def test_broad_precise_feature_count():
     """Ensure base features exist."""
-    assert len(BROAD) == 15, f"Expected 15 broad, got {len(BROAD)}"
-    assert len(PRECISE) == 23, f"Expected 23 precise, got {len(PRECISE)}"
+    assert len(BROAD) == 17, f"Expected 17 broad, got {len(BROAD)}"
+    assert len(PRECISE) == 29, f"Expected 29 precise, got {len(PRECISE)}"
+
+
+def test_ecc_rule_features():
+    """ECC coding standard features should match coding-standard descriptions."""
+    matched = _match("angular coding style", BROAD)
+    assert "coding_standard" in matched or "frontend" in matched
+    matched = _match("angular编码风格", BROAD)
+    assert "coding_standard" in matched
+
+
+def test_ecc_git_workflow():
+    matched = _match("git workflow conventional commits", BROAD)
+    assert "workflow_process" in matched or "vcs" in matched
+
+
+def test_ecc_hooks():
+    matched = _match("hooks configuration", BROAD)
+    assert "workflow_process" in matched
+
+
+def test_angular_precise():
+    matched = _match("angular components and services", PRECISE)
+    assert "angular" in matched
+
+
+def test_ruby_precise():
+    matched = _match("ruby on rails rubocop gem", PRECISE)
+    assert "ruby" in matched

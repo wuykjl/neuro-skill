@@ -112,3 +112,11 @@ See [extras_template.py](extras_template.py) — copy it, add your keywords, don
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+
+## Known Limitations (honest)
+
+- **< 50 skills**: keyword matching often works better. neuro-skill's graph advantage emerges at 100+ skills.
+- **Homogeneous skills**: if most skills belong to the same domain (e.g., all firecrawl variants), graph density spikes and hybrid degrades to near-keyword.
+- **CLI overhead**: ~250ms per invocation due to Python + numpy startup. Use the Python API for sub-10ms queries.
+- **New domains need keywords**: add your own features via [extras_template.py](extras_template.py) — the 38 base features cover general programming but not your specific tools.

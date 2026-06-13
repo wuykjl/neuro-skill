@@ -1,7 +1,7 @@
 """
 Generic base features — universal software development domains.
 
-These 15 broad + 23 precise features cover the most common
+These 17 broad + 29 precise features cover the most common
 programming languages, frameworks, and actions. For domain-specific
 skills (lark, firecrawl, medical, finance, etc.), create an
 extras file and pass it to build_router():
@@ -9,7 +9,7 @@ extras file and pass it to build_router():
     router = build_router(["./skills/"], precise_features=my_extras)
 """
 
-# 15 general domains
+# 17 general domains
 BROAD = {
     "security": [
         "security", "vulnerability", "auth", "injection", "xss", "csrf",
@@ -79,9 +79,20 @@ BROAD = {
         "test", "tdd", "coverage", "e2e", "单元测试", "测试", "覆盖率",
          "playwright", "pytest",
     ],
+    "coding_standard": [
+        "coding style", "编码风格", "coding standard", "编码规范",
+        "代码规范", "style guide", "规范", "标准", "规则", "rule",
+        "ECC", "convention", "约定", "guideline", "指南",
+    ],
+    "workflow_process": [
+        "workflow", "工作流", "development process", "开发流程",
+        "git workflow", "git工作流", "commit format", "提交格式",
+        "pull request", "PR流程", "hooks", "钩子", "debugging",
+        "调试", "排查",
+    ],
 }
 
-# 23 languages / frameworks / actions
+# 29 languages / frameworks / actions
 PRECISE = {
     "python": ["python", "django", "fastapi", "pytorch", "tkinter", "pep", "pip"],
     "javascript_ts": ["javascript", "typescript", "jsx", "tsx", "node.js",
@@ -119,4 +130,14 @@ PRECISE = {
     "e2e": ["e2e", "end to end", "playwright", "端到端", "端到端测试"],
     "documentation": ["document", "readme", "docstring", "文档生成",
                        "generate doc", "写文档", "生成文档"],
+    # Additional languages (for ECC rule coverage)
+    "angular": ["angular", "ng", "angular组件", "angular服务"],
+    "vue": ["vue", "vuex", "pinia", "nuxt"],
+    "ruby": ["ruby", "rails", "gem", "rubocop"],
+    "perl": ["perl", "cpan", "perl模块"],
+    "fsharp": ["f#", "fsharp", "functional", "discriminated union"],
+    # ECC / coding standards specific
+    "ecc_rules": ["ECC", "ecc", "rule config", "规则配置", "编码规范配置",
+                  "coding standard config", "standard enforcement", "规范落地",
+                  "coding rule", "编码规则"],
 }
