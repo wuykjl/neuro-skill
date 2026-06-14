@@ -133,11 +133,13 @@ def _build_graph(F: np.ndarray, knn: int | None = None) -> np.ndarray:
     if knn is not None and knn < A.shape[0] - 1:
         N = A.shape[0]
         k = min(knn, N - 1)
-        # For each row, zero out all but top-k values
+        # For each row, keep only top-k neighbors (argpartition avoids full sort)
         for i in range(N):
             row = A[i]
-            threshold = np.partition(row, -(k + 1))[-(k + 1)]
-            A[i, row < threshold] = 0.0
+            top_k_idx = np.argpartition(-row, k - 1)[:k]
+            mask = np.zeros(N, dtype=bool)
+            mask[top_k_idx] = True
+            A[i, ~mask] = 0.0
         # Symmetrize: union of directed k-NN edges
         A = np.maximum(A, A.T)
 

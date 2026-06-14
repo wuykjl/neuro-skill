@@ -157,16 +157,14 @@ def jaccard(skills: list[dict], query: str, F: np.ndarray | None = None, **_kw) 
     With F (hot path): pure numpy, ~0.5ms.
     """
     if F is not None and _kw.get("meta"):
-        # Hot path: use pre-computed feature vectors
+        # Hot path: shared query vector (cached)
         meta = _kw["meta"]
-        qf = extract_query_features(query)
-        qv = np.zeros(F.shape[1])
-        for b in qf["broad"]:
-            if b in meta["broad"]:
-                qv[meta["broad"][b]] = 1.0
-        for p in qf["precise"]:
-            if p in meta["precise"]:
-                qv[meta["precise"][p]] = 1.5
+        qv = _build_query_vector(
+            query,
+            tuple(sorted(meta["broad"].items())),
+            tuple(sorted(meta["precise"].items())),
+            F.shape[1],
+        )
         # Jaccard = intersection / union for binary vectors
         # For each skill i: AND(qv, F[i]) / OR(qv, F[i])
         F_binary = (F > 0).astype(np.float64)
@@ -205,6 +203,25 @@ def tfidf(skills: list[dict], query: str, **_kw) -> np.ndarray:
         return keyword(skills, query)
 
 
+# ── 共享查询向量构建 ──
+
+@_lru_cache(maxsize=512)
+def _build_query_vector(query: str, broad_keys: tuple, precise_keys: tuple,
+                        F_cols: int) -> np.ndarray:
+    """Build feature vector for a query. Cacheable — keys are hashable tuples."""
+    qf = extract_query_features(query)
+    qv = np.zeros(F_cols)
+    broad = {b[0]: b[1] for b in broad_keys} if broad_keys else {}
+    precise = {p[0]: p[1] for p in precise_keys} if precise_keys else {}
+    for b in qf["broad"]:
+        if b in broad:
+            qv[broad[b]] = 1.0
+    for p in qf["precise"]:
+        if p in precise:
+            qv[precise[p]] = 1.5
+    return qv
+
+
 # ── 方法 4: 余弦相似度 ──
 
 def cosine(skills: list[dict], query: str,
@@ -212,14 +229,12 @@ def cosine(skills: list[dict], query: str,
     if F is None or meta is None:
         return np.zeros(len(skills))
 
-    qf = extract_query_features(query)
-    qv = np.zeros(F.shape[1])
-    for b in qf["broad"]:
-        if b in meta["broad"]:
-            qv[meta["broad"][b]] = 1.0
-    for p in qf["precise"]:
-        if p in meta["precise"]:
-            qv[meta["precise"][p]] = 1.5
+    qv = _build_query_vector(
+        query,
+        tuple(sorted(meta["broad"].items())),
+        tuple(sorted(meta["precise"].items())),
+        F.shape[1],
+    )
 
     q_norm = np.linalg.norm(qv)
     if q_norm < 1e-10:
