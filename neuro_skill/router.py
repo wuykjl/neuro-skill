@@ -103,6 +103,44 @@ class SkillRouter:
         """Get Error Book statistics."""
         return self._get_feedback().stats()
 
+    def plan(
+        self, query: str, top_k: int = 5, enable_feedback: bool = True
+    ) -> "PlanResult":
+        """
+        One-shot: route → infer deps → topo-sort → execution plan.
+
+        Combines hybrid routing, typed graph edge inference, and
+        topological sort into a single call. Returns a PlanResult
+        with ordered steps, reasoning, and validity.
+
+        Args:
+          query: user query text
+          top_k: how many skills to consider
+          enable_feedback: apply Error Book corrections
+
+        Returns:
+          PlanResult with .steps, .reasoning, .valid, .to_prompt()
+        """
+        from neuro_skill.typed_graph import auto_discover_edges
+        from neuro_skill.planner import plan as _plan, PlanResult
+
+        # Step 1: Route
+        ranked = self.query(query, top_k=top_k, method="hybrid",
+                            enable_feedback=enable_feedback)
+
+        # Step 2: Infer dependency edges
+        edges = auto_discover_edges(self._skills)
+        graph = edges.get("depends_on", {})
+
+        # Step 3: Build skill index for planner
+        skill_index = {
+            name: self.get_skill(name) or {"name": name, "search_text": ""}
+            for name, _ in ranked
+        }
+
+        # Step 4: Plan
+        return _plan(ranked, skill_index, dependency_graph=graph)
+
     def _get_feedback(self):
         if self._feedback is None:
             from neuro_skill.feedback import ErrorBook

@@ -20,5 +20,5 @@ from neuro_skill.router import SkillRouter
 # Lazy auto-start query — first call ~500ms, then 5ms
 from neuro_skill.autostart import query
 
-__version__ = "0.5.1"
+__version__ = "0.6.1"
 __all__ = ["SkillRouter", "query"]

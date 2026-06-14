@@ -159,10 +159,11 @@ def auto_discover_edges(skills: list[dict]) -> dict:
     Heuristic edge discovery when no explicit edges are declared.
 
     Rules:
-      1. If skill name contains "auth" → depends_on any skill named "*auth*"
-      2. If skill name contains a language (python, go, etc.) and another
-         skill has the same language in its name → complements edge
-      3. "review" skills → complements with "test" skills
+      1. auth/login → depends_on auth skill
+      2. Same language family → complements
+      3. review ↔ test mutual complement
+      4. Sequential actions: contact→im→calendar, scan→fix, build→deploy
+      5. code quality chain: review→refactor→test
     """
     N = len(skills)
     depends_on: dict[str, list[str]] = {}
@@ -174,33 +175,54 @@ def auto_discover_edges(skills: list[dict]) -> dict:
         "flutter", "php", "cpp", "csharp", "typescript",
     ]
 
+    # Sequential action chains: earlier → depends_on later
+    chains = [
+        (["contact", "通讯录", "联系人"], ["im", "消息", "发消息"]),
+        (["im", "消息", "发消息"], ["calendar", "日程", "会议"]),
+        (["scan", "扫描", "audit", "审计"], ["fix", "修复", "resolve"]),
+        (["build", "构建", "compile"], ["deploy", "部署", "release"]),
+        (["review", "审查", "code review"], ["refactor", "重构"]),
+        (["refactor", "重构", "clean"], ["test", "测试", "tdd"]),
+        (["search", "搜索", "find"], ["scrape", "parse", "extract"]),
+        (["plan", "规划", "architect"], ["build", "implement", "create"]),
+        (["ingest", "upload", "上传"], ["process", "convert", "处理"]),
+    ]
+
+    def _name_hits(name, keywords):
+        return any(kw.lower() in name.lower() for kw in keywords)
+
     for i, s1 in enumerate(skills):
         n1 = s1["name"]
         deps = []
         comps = []
 
         for j, s2 in enumerate(skills):
-            if i == j:
-                continue
+            if i == j: continue
             n2 = s2["name"]
 
             # Rule 1: auth dependency
-            if "auth" in n1.lower() and "auth" in n2.lower():
+            if "auth" in n1.lower() and "auth" in n2.lower() and n1 != n2:
                 deps.append(n2)
+            if ("login" in n1.lower() or "认证" in n1.lower()) and "auth" in n2.lower():
+                if n2 not in deps: deps.append(n2)
 
-            # Rule 2: same language family
+            # Rule 2: same language → complements
             for lang in lang_patterns:
                 if lang in n1.lower() and lang in n2.lower():
-                    comps.append(n2)
-                    break
+                    comps.append(n2); break
 
             # Rule 3: review ↔ test
             if ("review" in n1.lower() and "test" in n2.lower()) or \
                ("test" in n1.lower() and "review" in n2.lower()):
                 comps.append(n2)
 
-        if deps:
-            depends_on[n1] = list(set(deps))
+            # Rule 4: sequential chains
+            for upstream_kws, downstream_kws in chains:
+                if _name_hits(n1, upstream_kws) and _name_hits(n2, downstream_kws):
+                    if n2 not in deps:
+                        deps.append(n2)
+
+        if deps: depends_on[n1] = list(set(deps))
         if comps:
             complements[n1] = list(set(comps))[:5]
 

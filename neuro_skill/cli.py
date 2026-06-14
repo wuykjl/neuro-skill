@@ -322,24 +322,24 @@ def cmd_edges(args):
 
 
 def cmd_plan(args):
-    """Plan execution order for top-k skills after routing."""
+    """One-shot route + plan — routing, dependency inference, and execution ordering in a single call."""
     from neuro_skill import SkillRouter
-    from neuro_skill.planner import quick_plan
 
     router = SkillRouter()
     router.build(args.directories)
 
-    # Route
-    results = router.query(args.query, top_k=args.top_k)
+    result = router.plan(args.query, top_k=args.top_k)
     print(f"Query: {args.query}")
-    print(f"Top-{args.top_k} skills:")
-    for name, score in results:
-        print(f"  {name}: {score:.3f}")
-
-    # Plan
-    plan_result = quick_plan(results, router)
     print()
-    print(plan_result.to_prompt())
+    print(f"Execution Plan ({'valid' if result.valid else 'incomplete'}):")
+    if result.reasoning:
+        for r in result.reasoning:
+            print(f"  reason: {r}")
+        print()
+    for i, step in enumerate(result.steps):
+        print(f"  {i+1}. {step}")
+    if result.unresolved_deps:
+        print(f"\n  Unresolved: {result.unresolved_deps}")
 
 
 def cmd_learn(args):
