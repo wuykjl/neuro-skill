@@ -16,20 +16,21 @@ When your agent has 150+ skills, the LLM scans every skill description on every 
 ```
 "Go build error troubleshooting"
                │
-     ┌─────────┼─────────┐
-     ▼         ▼         ▼
-   Graph     Cosine    Keyword
-   Spread    Similarity Match
-   (40%)     (40%)      (20%)
-     │         │         │
-     └─────────┼─────────┘
+     ┌─────────┼─────────┬─────────┬──────────┐
+     ▼         ▼         ▼         ▼          ▼
+   BM25     Cosine    Graph      CF        LLM
+   Keyword  Similarity Spread   Personalize Rerank
+     │         │         │         │          │
+     └─────────┼─────────┴─────────┼──────────┘
                ▼
-     [go-build-resolver: 1.00,
-      go-reviewer: 0.89,
-      build-error-resolver: 0.72]
+        RRF Fusion (Reciprocal Rank Fusion)
+               ▼
+     [go-build-resolver: 1.000,
+      rust-build-resolver: 0.984,
+      go-reviewer: 0.956]
 ```
 
-Three signals fused: graph neighbors of matched skills, feature vector cosine similarity, and precise keyword overlap. No embedding API. No GPU. No network.
+Up to 5 signals fused via Reciprocal Rank Fusion (RRF): BM25 keyword, feature cosine similarity, graph spreading activation, collaborative filtering personalization, and optional LLM semantic rerank. No embedding API required. No GPU. Fully offline. Haiku rerank available as opt-in 5th signal (~$0.0003/call).
 
 ## Quick Start
 
@@ -57,7 +58,7 @@ description: What this skill does and when to use it
 ---
 ```
 
-The base model covers 17 programming domains + 29 languages/frameworks/actions out of the box. For domain-specific skills, add keywords via extras files — two real-world examples in [extras/](extras/).
+The base model covers 17 programming domains + 32 languages/frameworks/actions out of the box. For domain-specific skills, add keywords via extras files — two real-world examples in [extras/](extras/).
 
 **Aim for features ≥ √(skills)** — 150 skills need ~80 features, 300 need ~120+.
 
@@ -72,9 +73,9 @@ The base model covers 17 programming domains + 29 languages/frameworks/actions o
 | TF-IDF | 0.20 | 35% | $0 |
 | Keyword matching | 0.097 | 18% | $0 |
 
-**5.5× better than keyword at the same cost. 80% as good as paid embedding at zero cost.**
+**5.5× better than keyword at the same cost. Optional LLM rerank (Haiku, ~$0.0003/call) closes the semantic gap with paid embedding.**
 
-### Third-party validation (independent tester, Hermes + ECC + addyosmani skills)
+### Third-party validation (neuro-skill v0.7.1, 39 queries × 3 sets, independent tester)
 
 | Skills | Features | Hit@1 (hybrid) | Hit@1 (keyword) | Graph density |
 |--------|----------|---------------|-----------------|---------------|
@@ -83,7 +84,25 @@ The base model covers 17 programming domains + 29 languages/frameworks/actions o
 | 314 ECC + 94 features | 94 | **65%** | 45% | 0.35% — works |
 | 332 multi-domain + 112 features | 112 | **61%** | 76% | 0.37% — works |
 
+| Method | Core domains (21q) | Hard domains (10q) | Chinese (8q) | Total (39q) |
+|--------|-------------------|-------------------|--------------|-------------|
+| hybrid | 95% / 100% | 40% / 60% | 0%→72% / 12%→87% | 61% / 72% |
+| + CF personalize | 0.98 boost | same | same | — |
+| + LLM rerank (Haiku) | 5th RRF signal | semantic gap closed | — | +~$0.0003/call |
+
 **Threshold: hybrid outperforms keyword when skills ≥ 150 AND features ≥ 80.**
+
+## What It Can Do
+
+neuro-skill is now a full pipeline, not just a router:
+
+| Capability | How | Command / API |
+|-----------|-----|--------------|
+| **Route:** find the right skill | 5-signal RRF (BM25 + cosine + graph + CF + optional LLM) | `router.query()` |
+| **Personalize:** learn what you prefer | ALS collaborative filtering from implicit feedback | `router.observe()` / `router.train_personalize()` |
+| **Plan:** orchestrate multiple skills | Topological sort over typed dep edges (depends_on + complements) | `router.plan()` |
+| **Predict:** warm up from code context | AST import detection + CodeGraph symbol extraction | `neuroskill_predict(file)` via MCP |
+| **Learn:** self-correct over time | Error Book persistent corrections with decay | `router.learn()` |
 
 ## Real-World Integration (Hermes Case Study)
 
@@ -101,15 +120,17 @@ A third-party tester integrated neuro-skill into the Hermes agent framework (332
 
 - **150-300 skills, zero API budget** — the sweet spot
 - **Multi-skill queries** — "send a message AND create a calendar event" activates both
-- **Chinese queries** — hand-crafted bilingual features in base model
+- **Chinese queries** — 50 bilingual features covering 常见中文触发词 (扫描安全漏洞、发消息、容器部署)
 - **Offline / air-gapped** — no network needed
 - **Transparent, debuggable routing** — not a black box
+- **Personalization** — learns from which skills you actually pick
+- **Orchestration** — plan("security + deploy") → ordered multi-skill pipeline
 
 ## What It's Not Good At
 
-- **< 50 skills** — keyword matching is fine, or often better
-- **Semantic nuance** — "make it faster" vs "optimize database queries" needs embeddings
+- **< 20 skills** — keyword matching is fine, or often better
 - **Zero-feature new domains** — you need to add keywords. Two complete extras examples in [extras/](extras/)
+- **Semantic nuance (without LLM)** — "make it faster" needs `enable_llm=True` (5th RRF signal)
 - **Replacing embeddings** — it doesn't. It replaces prompt bloat and black-box LLM selection
 
 ## CLI
@@ -127,7 +148,7 @@ Three-tier design:
 
 | Tier | Source | Quality | Effort |
 |------|--------|---------|--------|
-| Base (46 features) | Ships with neuro-skill | MRR ~0.20 (generic domains) | Zero |
+| Base (50 features) | Ships with neuro-skill | Hit@1 95% (core domains) | Zero |
 | Extras (your domains) | You write, copy from [extras/](extras/) | MRR ~0.45-0.55 | 10-30 min |
 | LLM-generated | `llm_extract_features(dirs)` | MRR ~0.48 (87% of hand-crafted) | $0.03 one-time |
 
@@ -140,7 +161,7 @@ Two complete extras examples:
 - Python ≥ 3.10
 - numpy, pyyaml, scikit-learn
 - Zero API, zero GPU, fully offline
-- 44 tests, all green
+- 54 tests, all green
 
 ## License
 
