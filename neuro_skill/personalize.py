@@ -86,7 +86,7 @@ class Personalizer:
     # ── Train ────────────────────────────
 
     def train(self, skill_names: list[str]):
-        """Factorize query→skill implicit matrix with ALS.
+        """Factorize query->skill implicit matrix with ALS.
 
         skill_names: ordered list of all possible skills (index mapping).
         """
@@ -98,17 +98,17 @@ class Personalizer:
             return
 
         n_skills = len(skill_names)
-        skill_idx = {name: i for i, name in enumerate(skill_names)}
+        skill_to_idx = {name: i for i, name in enumerate(skill_names)}
 
-        # Build confidence matrix: user=query_hash, item=skill_name
+        # Build confidence matrix: rows=query_hashes, cols=skills
         self._query_ids = sorted(self._observations.keys())
         n_queries = len(self._query_ids)
         M = np.zeros((n_queries, n_skills), dtype=np.float64)
 
         for qi, qk in enumerate(self._query_ids):
             for sn, count in self._observations[qk].items():
-                if sn in skill_idx:
-                    M[qi, skill_idx[sn]] = 1.0 + np.log1p(count)
+                if sn in skill_to_idx:
+                    M[qi, skill_to_idx[sn]] = 1.0 + np.log1p(count)
 
         if M.sum() < 1:
             self._trained = False
@@ -120,62 +120,80 @@ class Personalizer:
             from implicit.als import AlternatingLeastSquares
 
             sparse_M = sp.csr_matrix(M.astype(np.float32))
-            model = AlternatingLeastSquares(factors=min(64, n_skills // 2),
+            factors = min(64, max(4, n_skills // 2))
+            model = AlternatingLeastSquares(factors=factors,
                                             regularization=0.1, iterations=15,
                                             random_state=42)
             model.fit(sparse_M, show_progress=False)
             self._model = model
-            self._item_factors = model.item_factors  # (n_skills, factors)
+            # user_factors: (n_queries, factors), item_factors: (n_skills, factors)
+            self._user_factors = model.user_factors.copy()    # for query→embedding lookup
+            self._item_factors = model.item_factors.copy()    # kept for reference
+            self._query_to_embedding = {}
+            for qi, emb in enumerate(self._user_factors):
+                self._query_to_embedding[self._query_ids[qi]] = emb
             self._trained = True
             return
         except ImportError:
             pass  # fallback
 
-        # Fallback: simple co-occurrence matrix
-        cooc = (M.T @ M)  # (n_skills, n_skills)
+        # Fallback: co-occurrence — M'(n_skills, n_queries) @ preferences → boost
+        # For each query, preferences = normalized column of M weighted by query similarity
+        cooc = M.T @ M  # (n_skills, n_skills)
         norms = np.linalg.norm(cooc, axis=1, keepdims=True)
         norms[norms < 1e-10] = 1.0
-        self._item_factors = cooc / norms  # normalized co-occurrence
+        self._cooc = cooc / norms
+        self._M = M  # (n_queries, n_skills) — raw confidence matrix
         self._trained = True
 
     # ── Personalize ──────────────────────
 
     def personalize(self, query: str) -> np.ndarray:
-        """Produce a score boost vector (len=n_skills) for this query."""
+        """Produce a per-skill boost vector of length n_skills.
+
+        ALS path:   user_embedding @ item_factors.T → (n_skills,) → normalize
+        Cooc path:  find weighted column of M → normalize
+        """
         n = len(self._skill_names)
         if not self._trained or n == 0:
-            return np.ones(n) * 0.5  # neutral — no boost
+            return np.ones(n) * 0.5
 
         qk = query_key(query)
 
-        # If we've seen this exact query, return its known preferences
-        if qk in self._query_ids:
-            qi = self._query_ids.index(qk)
-            if self._item_factors is not None:
-                try:
-                    # ALS: item_factors[qi] gives user embedding
-                    # Score = user_embedding @ item_factors.T
-                    if self._item_factors.shape[0] == n:
-                        # Fallback cooc path: use qi-th row
-                        return self._item_factors[qi]
-                except Exception:
-                    pass
+        # ── ALS path ──
+        if self._model is not None:
+            # Try to get embedding for this query
+            emb = None
+            if qk in self._query_to_embedding:
+                emb = self._query_to_embedding[qk]
 
-        # For unseen queries: find similar queries via their observations
-        if qk not in self._observations:
-            return np.ones(n) * 0.5
+            if emb is not None and self._item_factors is not None:
+                # emb: (factors,), item_factors: (n_skills, factors)
+                scores = self._item_factors @ emb   # → (n_skills,)
+                boost = np.where(scores > 0, scores / max(scores.max(), 1), 0.3)
+                return boost.astype(np.float64)
 
-        # Simple aggregation: weight skills by counts from similar queries
-        boost = np.zeros(n)
+        # ── Fallback co-occurrence path ──
+        if hasattr(self, '_M') and self._M is not None:
+            if qk in self._query_ids:
+                qi = self._query_ids.index(qk)
+                # This query's observed preferences as a binary vector
+                query_vec = self._M[qi]  # (n_skills,)
+                if query_vec.max() > 0:
+                    # Co-occurrence-weighted boost
+                    boost = self._cooc.T @ query_vec  # (n_skills,) — skills similar to this query's picks
+                    if boost.max() > boost.min():
+                        boost = (boost - boost.min()) / (boost.max() - boost.min())
+                    return 0.3 + 0.7 * boost
+
+        # ── Unknown query: look up observations directly ──
         skill_idx = {name: i for i, name in enumerate(self._skill_names)}
-
-        for sn, count in self._observations[qk].items():
+        boost = np.zeros(n)
+        for sn, count in self._observations.get(qk, {}).items():
             if sn in skill_idx:
                 boost[skill_idx[sn]] += count
-
         if boost.max() > 0:
-            boost = boost / boost.max()  # normalize to [0, 1]
-            return 0.3 + 0.7 * boost      # range [0.3, 1.0] — always some signal
+            return 0.3 + 0.7 * boost / boost.max()
         return np.ones(n) * 0.5
 
     # ── Info ──
