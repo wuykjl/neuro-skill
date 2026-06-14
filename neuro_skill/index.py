@@ -314,7 +314,7 @@ class SkillIndex:
     @classmethod
     def load(cls, path: str, skills: list[dict]) -> "SkillIndex":
         """从 .npz 加载索引"""
-        data = np.load(path, allow_pickle=True)
+        data = np.load(path, allow_pickle=False)
         idx = cls()
         idx.skills = skills
         idx._name_to_idx = {s["name"]: i for i, s in enumerate(skills)}
