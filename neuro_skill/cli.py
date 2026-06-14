@@ -215,6 +215,101 @@ def cmd_serve(args):
         httpd.shutdown()
 
 
+def cmd_install(args):
+    """Install MCP hook into AI coding agents."""
+    import json as _json
+    agent = args.agent
+    mcp_cmd = args.mcp_command
+
+    mcp_config = {
+        "neuro-skill": {
+            "command": mcp_cmd,
+            "args": [],
+            "description": "Zero-cost hybrid skill router — pre-rank skills before LLM sees them",
+        }
+    }
+
+    targets = []
+    if agent in ("claude", "all"):
+        targets.append(Path.home() / ".claude" / "mcp.json")
+    if agent in ("cursor", "all"):
+        targets.append(Path.cwd() / ".cursor" / "mcp.json")
+    if agent in ("codex", "all"):
+        targets.append(Path.home() / ".codex" / "mcp.json")
+
+    installed = []
+    for target in targets:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        existing = {}
+        if target.exists():
+            try:
+                existing = _json.loads(target.read_text(encoding="utf-8"))
+            except Exception:
+                existing = {}
+        existing.setdefault("mcpServers", {}).update(mcp_config)
+        target.write_text(_json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+        installed.append(str(target))
+
+    print(f"neuro-skill MCP installed for {agent}:")
+    for p in installed:
+        print(f"  + {p}")
+    print()
+    print("Next steps:")
+    print("  1. Restart your AI agent")
+    print("  2. The agent will auto-discover the neuro-skill MCP tools")
+    print("  3. Try: 'Find the best skill for checking Python SQL injection'")
+
+
+def cmd_edges(args):
+    """Auto-discover typed edges from skills."""
+    from neuro_skill import SkillRouter
+    from neuro_skill.parser import load_skills
+    from neuro_skill.typed_graph import auto_discover_edges
+
+    skills = load_skills(args.directories)
+    edges = auto_discover_edges(skills)
+
+    n_dep = sum(len(v) for v in edges["depends_on"].values())
+    n_comp = sum(len(v) for v in edges["complements"].values())
+    print(f"Auto-discovered: {n_dep} depends_on edges, {n_comp} complements edges")
+    print()
+
+    if edges["depends_on"]:
+        print("depends_on edges:")
+        for name, deps in sorted(edges["depends_on"].items()):
+            print(f"  {name} → {', '.join(deps)}")
+    if edges["complements"]:
+        print()
+        print("complements edges (top 10):")
+        shown = 0
+        for name, comps in sorted(edges["complements"].items(), key=lambda x: -len(x[1])):
+            if shown >= 10:
+                break
+            print(f"  {name} ↔ {', '.join(comps[:4])}")
+            shown += 1
+
+
+def cmd_plan(args):
+    """Plan execution order for top-k skills after routing."""
+    from neuro_skill import SkillRouter
+    from neuro_skill.planner import quick_plan
+
+    router = SkillRouter()
+    router.build(args.directories)
+
+    # Route
+    results = router.query(args.query, top_k=args.top_k)
+    print(f"Query: {args.query}")
+    print(f"Top-{args.top_k} skills:")
+    for name, score in results:
+        print(f"  {name}: {score:.3f}")
+
+    # Plan
+    plan_result = quick_plan(results, router)
+    print()
+    print(plan_result.to_prompt())
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="neuro-skill",
@@ -289,6 +384,35 @@ def main():
     p_serve.add_argument("--port", "-p", type=int, default=8765, help="HTTP port")
     p_serve.add_argument("--socket", "-s", help="Unix socket path (faster than HTTP for local IPC)")
 
+    # install
+    p_install = sub.add_parser("install", help="Install MCP hook into AI coding agents")
+    p_install.add_argument("agent", choices=["claude", "cursor", "codex", "all"],
+                           help="Target agent (claude/cursor/codex/all)")
+    p_install.add_argument("--mcp-command", default="neuro-skill-mcp",
+                           help="MCP server command (default: neuro-skill-mcp)")
+
+    # edges
+    p_edges = sub.add_parser("edges", help="Auto-discover typed edges (depends_on + complements)")
+    p_edges.add_argument("--directories", "-d", nargs="+",
+                         default=[
+                             str(Path.home() / ".claude/skills/"),
+                             str(Path.home() / ".claude/agents/"),
+                             str(Path.home() / ".claude/.agents/skills/"),
+                         ],
+                         help="Skill directories")
+
+    # plan
+    p_plan = sub.add_parser("plan", help="Plan execution order for top-k skills")
+    p_plan.add_argument("query", help="User query")
+    p_plan.add_argument("--top-k", "-k", type=int, default=5)
+    p_plan.add_argument("--directories", "-d", nargs="+",
+                        default=[
+                            str(Path.home() / ".claude/skills/"),
+                            str(Path.home() / ".claude/agents/"),
+                            str(Path.home() / ".claude/.agents/skills/"),
+                        ],
+                        help="Skill directories")
+
     args = parser.parse_args()
 
     if args.command == "build":
@@ -305,6 +429,12 @@ def main():
         cmd_discover_features(args)
     elif args.command == "serve":
         cmd_serve(args)
+    elif args.command == "install":
+        cmd_install(args)
+    elif args.command == "edges":
+        cmd_edges(args)
+    elif args.command == "plan":
+        cmd_plan(args)
     else:
         parser.print_help()
 
