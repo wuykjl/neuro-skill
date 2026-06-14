@@ -20,6 +20,7 @@ dev = ["pytest>=8", "pytest-cov"]
 
 [project.scripts]
 neuro-skill = "neuro_skill.cli:main"
+neuro-skill-mcp = "neuro_skill.mcp_server:cmd_mcp"
 
 [tool.setuptools.packages.find]
 include = ["neuro_skill*"]
