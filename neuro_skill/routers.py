@@ -316,11 +316,20 @@ def hybrid(skills: list[dict], query: str,
             rank_arr[idx] = float(rank)
 
     # Filter out methods that returned all zeros (no signal)
+    signals = [rank_bm25, rank_cos, rank_graph]
+
+    # 5th signal: LLM semantic rerank (optional, API-required)
+    if kw.get("enable_llm"):
+        rank_llm = llm_rerank(query, skills, top_n=min(10, N),
+                              model=kw.get("llm_model", "claude-haiku-4-5-20251001"),
+                              api_key=kw.get("llm_api_key"))
+        if rank_llm is not None:
+            signals.append(rank_llm)
+
     active = 0
     rrf = np.zeros(N, dtype=np.float64)
-    for rank_arr in [rank_bm25, rank_cos, rank_graph]:
-        if rank_arr.max() > 0 or not np.allclose(s_bm25 if rank_arr is rank_bm25
-                    else s_cos if rank_arr is rank_cos else s_graph, 0):
+    for rank_arr in signals:
+        if rank_arr.max() > rank_arr.min() or not np.allclose(rank_arr, 0):
             rrf += 1.0 / (K + rank_arr)
             active += 1
 
@@ -329,6 +338,81 @@ def hybrid(skills: list[dict], query: str,
         return np.ones(N) / N
 
     return rrf
+
+
+# ── 方法 8: LLM Rerank (5th RRF signal) ──
+
+def llm_rerank(query: str, skills: list[dict], top_n: int = 10,
+               model: str = "claude-haiku-4-5-20251001",
+               api_key: str | None = None) -> np.ndarray | None:
+    """
+    Let Haiku re-rank the top-N candidates. Returns rank array or None.
+
+    Cost:  ~$0.0003/call (Haiku, top-10), ~200ms latency
+    Fallback: returns None silently — hybrid() skips the 5th signal.
+
+    The LLM sees skill name + description for semantic understanding
+    that BM25/feature-cosine cannot provide (e.g. "make it faster" vs
+    "optimize database queries").
+    """
+    import os as _os, json as _json
+
+    N = len(skills)
+    if N == 0:
+        return None
+
+    # Get top-N via BM25 (fastest). Falls back to uniform if no search_text.
+    try:
+        s_bm25 = keyword(skills, query)
+        top_idx = np.argsort(-s_bm25)[:min(top_n, N)]
+    except Exception:
+        return None
+
+    candidates = []
+    for idx in top_idx:
+        s = skills[idx]
+        desc = s.get("description", "")[:120].replace("\n", " ")
+        candidates.append({"name": s["name"], "description": desc})
+
+    c_list = "\n".join(
+        f"{i+1}. {c['name']}: {c['description']}"
+        for i, c in enumerate(candidates)
+    )
+
+    prompt = (
+        f"Task: Rank these skills by relevance to the query.\n\n"
+        f"Query: {query}\n\n"
+        f"Skills:\n{c_list}\n\n"
+        f"Return ONLY a JSON array of skill names in order of relevance "
+        f"(most relevant first). Include ALL skills in the list:\n"
+        f'["skill_name_1", "skill_name_2", ...]'
+    )
+
+    try:
+        import anthropic
+        client = anthropic.Anthropic(
+            api_key=api_key or _os.environ.get("ANTHROPIC_API_KEY")
+        )
+        resp = client.messages.create(
+            model=model, max_tokens=256, temperature=0.0,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = resp.content[0].text.strip()
+        if text.startswith("```"):
+            text = "\n".join(text.split("\n")[1:-1])
+        ranked_names = _json.loads(text)
+    except Exception:
+        return None  # silent fallback — skip this signal
+
+    # Convert LLM rank order to rank array (size N)
+    rank_llm = np.ones(N, dtype=np.float64) * N  # unranked = last
+    for rank, name in enumerate(ranked_names):
+        for idx in range(N):
+            if skills[idx]["name"] == name:
+                rank_llm[idx] = float(rank)
+                break
+
+    return rank_llm
 
 
 # ── 路由注册表 ──
