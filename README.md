@@ -179,6 +179,17 @@ Two complete extras examples:
 - Zero API, zero GPU, fully offline
 - 54 tests, all green
 
+## Ecosystem
+
+Projects that neuro-skill builds on, was tested with, or drew design inspiration from:
+
+| Project | Role |
+|---------|------|
+| [ECC](https://github.com/wuykjl/ecc) (Enterprise Coding Conventions) | 117-rule coding standard framework. Used as a benchmark skill set during neuro-skill development. An `extras_ecc.py` example is included in [extras/](extras/). |
+| [MetaSkill](https://github.com/Dicklesworthstone/meta_skill) | Local-first skill management platform. Thompson Sampling personalization inspired by its bandit-optimized suggestion engine. |
+| [CodeGraph](https://github.com/colbymchenry/codegraph) | Pre-indexed code knowledge graph. MCP server architecture and `neuroskill_predict` context analysis inspired by its design. |
+| [agent-skill-finder](https://github.com/theshubh007/agent-skill-finder) | Independent validation of the BM25+Jaccard+Graph+zeroLLM architecture. Converged from a different starting point. |
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
