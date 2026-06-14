@@ -361,12 +361,12 @@ def llm_rerank(query: str, skills: list[dict], top_n: int = 10,
     if N == 0:
         return None
 
-    # Get top-N via BM25 (fastest). Falls back to uniform if no search_text.
+    # Get top-N candidates. Through BM25 if available, otherwise first N.
     try:
         s_bm25 = keyword(skills, query)
         top_idx = np.argsort(-s_bm25)[:min(top_n, N)]
     except Exception:
-        return None
+        top_idx = np.arange(min(top_n, N))
 
     candidates = []
     for idx in top_idx:
@@ -390,14 +390,35 @@ def llm_rerank(query: str, skills: list[dict], top_n: int = 10,
 
     try:
         import anthropic
+        # Auto-detect API key: ANTHROPIC_API_KEY > ANTHROPIC_AUTH_TOKEN > explicit arg
+        resolved_key = (
+            api_key
+            or _os.environ.get("ANTHROPIC_API_KEY")
+            or _os.environ.get("ANTHROPIC_AUTH_TOKEN")
+        )
+        if not resolved_key:
+            return None  # no API key available, skip this signal
         client = anthropic.Anthropic(
-            api_key=api_key or _os.environ.get("ANTHROPIC_API_KEY")
+            api_key=resolved_key,
+            base_url=_os.environ.get("ANTHROPIC_BASE_URL"),  # DeepSeek proxy etc.
+        )
+        # Auto-detect model from env (ANTHROPIC_MODEL or ANTHROPIC_DEFAULT_HAIKU_MODEL)
+        actual_model = (
+            model
+            or _os.environ.get("ANTHROPIC_DEFAULT_HAIKU_MODEL")
+            or _os.environ.get("ANTHROPIC_MODEL")
+            or "claude-haiku-4-5-20251001"
         )
         resp = client.messages.create(
-            model=model, max_tokens=256, temperature=0.0,
+            model=actual_model, max_tokens=256, temperature=0.0,
             messages=[{"role": "user", "content": prompt}],
+            thinking={"type": "disabled"},  # disable thinking models (DeepSeek V4)
         )
-        text = resp.content[0].text.strip()
+        # Handle thinking models that return ThinkingBlock alongside TextBlock
+        text = "".join(
+            block.text for block in resp.content
+            if hasattr(block, "text") and block.text
+        ).strip()
         if text.startswith("```"):
             text = "\n".join(text.split("\n")[1:-1])
         ranked_names = _json.loads(text)
