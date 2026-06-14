@@ -23,3 +23,5 @@ Thumbs.db
 
 # Local config
 .env
+.codegraph/
+skill_router_index.*
