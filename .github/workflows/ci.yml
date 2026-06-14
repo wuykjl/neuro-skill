@@ -9,7 +9,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
-      - run: pip install -e .
+      - run: pip install -e ".[dev]"
       - run: python -c "from neuro_skill import SkillRouter; print('import OK')"
       - run: python -c "from neuro_skill.base_features import BROAD, PRECISE; print(len(BROAD), 'broad +', len(PRECISE), 'precise')"
       - run: python -m pytest tests/ -v
