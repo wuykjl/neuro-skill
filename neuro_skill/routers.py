@@ -32,10 +32,21 @@ def _rank(skills: list[dict], scores: np.ndarray,
     return [(skills[i]["name"], float(scores[i]), int(i)) for i in order]
 
 
+# ── Shared utilities ──
+
+from functools import lru_cache as _lru_cache
+
+@_lru_cache(maxsize=512)
+def _tokenize_cached(text: str) -> frozenset:
+    """Cached tokenization for frequently re-tokenized search_text."""
+    return frozenset(tokenize(text))
+
+
 # ── 方法 1: Okapi BM25 关键词匹配 ──
 
-# Per-skill document stats (computed once, shared across calls)
-_bm25_cache: dict = {}  # {id(skills): {"avgdl": float, "doc_lens": np.ndarray, "tf": defaultdict, "df": dict, "N": int}}
+# BM25 precompute cache with LRU eviction
+_bm25_cache: dict = {}  # {id(skills): stat}
+_bm25_order: list = []  # simple FIFO for LRU
 
 
 def _bm25_precompute(skills: list[dict]):
@@ -59,9 +70,11 @@ def _bm25_precompute(skills: list[dict]):
     stat = {"avgdl": avgdl, "doc_lens": np.array(doc_lens, dtype=np.float64),
             "df": dict(_idf_counter), "N": N}
     _bm25_cache[skey] = stat
-    # Limit cache size
-    if len(_bm25_cache) > 4:
-        _bm25_cache.pop(next(iter(_bm25_cache)))
+    # LRU eviction: keep last 8 entries (doubled from 4)
+    _bm25_order.append(skey)
+    if len(_bm25_order) > 8:
+        old = _bm25_order.pop(0)
+        _bm25_cache.pop(old, None)
     return stat
 
 
@@ -99,21 +112,32 @@ def keyword(skills: list[dict], query: str, **_kw) -> np.ndarray:
     if not valid.any():
         return np.zeros(N)
 
-    # Pre-tokenize all skill docs once
-    skill_tokens = [tokenize(s["search_text"]) for s in skills]
+    # Pre-tokenize all skill docs once using cached tokenizer
+    skill_tokens = [set(_tokenize_cached(s["search_text"])) for s in skills]
+
+    # Build reverse index for O(1) tf count
+    term_to_doc_tf: dict[str, dict[int, int]] = {}
+    for i, tokens in enumerate(skill_tokens):
+        tf_i = {}
+        for t in tokens:
+            tf_i[t] = tf_i.get(t, 0) + 1
+        for t, cnt in tf_i.items():
+            if t not in term_to_doc_tf:
+                term_to_doc_tf[t] = {}
+            term_to_doc_tf[t][i] = cnt
 
     # Compute BM25 scores for all skills in one pass
-    # For each query term → compute tf for all docs → accumulate weighted sum
     scores = np.zeros(N, dtype=np.float64)
     for qi, qt in enumerate(q_tokens):
         if not valid[qi]:
             continue
-        # Term frequency per document (count occurrences)
-        tf = np.zeros(N, dtype=np.float64)
-        for i, tokens in enumerate(skill_tokens):
-            tf[i] = sum(1 for t in tokens if t == qt)
-        if not tf.any():
+        # O(1) lookup via reverse index instead of O(N*T) scan
+        doc_tf = term_to_doc_tf.get(qt, {})
+        if not doc_tf:
             continue
+        tf = np.zeros(N, dtype=np.float64)
+        for di, cnt in doc_tf.items():
+            tf[di] = float(cnt)
         # BM25 scoring
         numerator = tf * (k1 + 1)
         denominator = tf + k1 * (1 - b + b * doc_lens / max(avgdl, 1))
