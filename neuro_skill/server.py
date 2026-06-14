@@ -79,51 +79,56 @@ class _QueryHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    @staticmethod
+    def _parse_int(val, default=5, lo=1, hi=100):
+        try:
+            v = int(val[0] if isinstance(val, list) else val)
+            return max(lo, min(v, hi))
+        except (ValueError, TypeError, IndexError):
+            return default
+
+    @staticmethod
+    def _parse_method(val, default="hybrid"):
+        from neuro_skill.routers import ROUTERS
+        m = (val[0] if isinstance(val, list) else str(val))
+        return m if m in ROUTERS else default
+
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
         params = parse_qs(parsed.query)
+        server = _get_server([])
 
         if path == "/health":
-            self._send_json(_get_server([]).health())
-            return
-
+            return self._send_json(server.health())
+        if path == "/stats":
+            return self._send_json(server.health())
         if path == "/query":
             q = params.get("q", [""])[0]
             if not q:
-                self._send_json({"error": "missing ?q= parameter"}, 400)
-                return
-            top_k = int(params.get("k", ["5"])[0])
-            method = params.get("method", ["hybrid"])[0]
-            result = _get_server([]).query(q, top_k=top_k, method=method)
-            self._send_json(result)
-            return
-
-        if path == "/stats":
-            self._send_json(_get_server([]).health())
-            return
+                return self._send_json({"error": "missing ?q= parameter"}, 400)
+            top_k = self._parse_int(params.get("k", ["5"]))
+            method = self._parse_method(params.get("method", ["hybrid"]))
+            return self._send_json(server.query(q, top_k=top_k, method=method))
 
         self._send_json({"error": "not found", "paths": ["/query?q=...", "/health", "/stats"]}, 404)
 
     def do_POST(self):
-        if self.path == "/query":
-            length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(length).decode("utf-8")
-            try:
-                data = json.loads(body) if body else {}
-            except json.JSONDecodeError:
-                data = {"q": body}
-            q = data.get("q", data.get("query", ""))
-            if not q:
-                self._send_json({"error": "missing 'q' in POST body"}, 400)
-                return
-            top_k = data.get("k", data.get("top_k", 5))
-            method = data.get("method", "hybrid")
-            result = _get_server([]).query(q, top_k=top_k, method=method)
-            self._send_json(result)
-            return
+        if self.path != "/query":
+            return self._send_json({"error": "POST only at /query"}, 404)
 
-        self._send_json({"error": "POST only at /query"}, 404)
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length).decode("utf-8")
+        try:
+            data = json.loads(body) if body else {}
+        except json.JSONDecodeError:
+            data = {"q": body}
+        q = data.get("q", data.get("query", ""))
+        if not q:
+            return self._send_json({"error": "missing 'q' in POST body"}, 400)
+        top_k = self._parse_int(data.get("k", data.get("top_k", 5)))
+        method = self._parse_method(data.get("method", "hybrid"))
+        return self._send_json(_get_server([]).query(q, top_k=top_k, method=method))
 
 
 # ── Socket mode (stdin, no HTTP overhead) ──

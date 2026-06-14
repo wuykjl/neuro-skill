@@ -169,13 +169,15 @@ def auto_discover_edges(skills: list[dict]) -> dict:
     depends_on: dict[str, list[str]] = {}
     complements: dict[str, list[str]] = {}
 
+    # Precompute lowercase names (avoid per-comparison .lower() calls)
+    names_lower = [s["name"].lower() for s in skills]
+
     lang_patterns = [
         "python", "go", "rust", "java", "kotlin", "swift", "dart",
         "react", "vue", "angular", "django", "fastapi", "spring",
         "flutter", "php", "cpp", "csharp", "typescript",
     ]
 
-    # Sequential action chains: earlier → depends_on later
     chains = [
         (["contact", "通讯录", "联系人"], ["im", "消息", "发消息"]),
         (["im", "消息", "发消息"], ["calendar", "日程", "会议"]),
@@ -188,42 +190,43 @@ def auto_discover_edges(skills: list[dict]) -> dict:
         (["ingest", "upload", "上传"], ["process", "convert", "处理"]),
     ]
 
-    def _name_hits(name, keywords):
-        return any(kw.lower() in name.lower() for kw in keywords)
+    def _name_hits(name_lower, keywords):
+        return any(kw.lower() in name_lower for kw in keywords)
 
     for i, s1 in enumerate(skills):
         n1 = s1["name"]
-        deps = []
-        comps = []
+        n1_lower = names_lower[i]
+        deps = set()
+        comps = set()
 
         for j, s2 in enumerate(skills):
             if i == j: continue
             n2 = s2["name"]
+            n2_lower = names_lower[j]
 
             # Rule 1: auth dependency
-            if "auth" in n1.lower() and "auth" in n2.lower() and n1 != n2:
-                deps.append(n2)
-            if ("login" in n1.lower() or "认证" in n1.lower()) and "auth" in n2.lower():
-                if n2 not in deps: deps.append(n2)
+            if "auth" in n1_lower and "auth" in n2_lower and n1 != n2:
+                deps.add(n2)
+            if ("login" in n1_lower or "认证" in n1_lower) and "auth" in n2_lower:
+                deps.add(n2)
 
             # Rule 2: same language → complements
             for lang in lang_patterns:
-                if lang in n1.lower() and lang in n2.lower():
-                    comps.append(n2); break
+                if lang in n1_lower and lang in n2_lower:
+                    comps.add(n2); break
 
             # Rule 3: review ↔ test
-            if ("review" in n1.lower() and "test" in n2.lower()) or \
-               ("test" in n1.lower() and "review" in n2.lower()):
-                comps.append(n2)
+            if ("review" in n1_lower and "test" in n2_lower) or \
+               ("test" in n1_lower and "review" in n2_lower):
+                comps.add(n2)
 
             # Rule 4: sequential chains
             for upstream_kws, downstream_kws in chains:
-                if _name_hits(n1, upstream_kws) and _name_hits(n2, downstream_kws):
-                    if n2 not in deps:
-                        deps.append(n2)
+                if _name_hits(n1_lower, upstream_kws) and _name_hits(n2_lower, downstream_kws):
+                    deps.add(n2)
+                    break
 
-        if deps: depends_on[n1] = list(set(deps))
-        if comps:
-            complements[n1] = list(set(comps))[:5]
+        if deps: depends_on[n1] = sorted(deps)
+        if comps: complements[n1] = sorted(comps)[:5]
 
     return {"depends_on": depends_on, "complements": complements}

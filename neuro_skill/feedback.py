@@ -126,13 +126,11 @@ class ErrorBook:
 
         entry = self._entries[qhash]
         now = time.time()
-        entry_ts = entry.get("_ts", now)
 
-        # Decay factor: 0.5^(age / half_life)
+        # Compute decay and boosted entry values
+        entry_ts = entry.get("_ts", now)
         age_days = (now - entry_ts) / 86400.0
         decay = 0.5 ** (age_days / max(decay_days, 0.1))
-
-        # Build boost map from entry (skip _ts key)
         boost_map = {
             k: v * decay for k, v in entry.items() if k != "_ts"
         }
@@ -152,6 +150,13 @@ class ErrorBook:
 
         return adjusted.tolist()
 
+    def _compute_boost(self, entry: dict, now: float, decay_days: float = 7.0) -> float:
+        """Compute the effective boost of one entry after time decay."""
+        entry_ts = entry.get("_ts", now)
+        age_days = (now - entry_ts) / 86400.0
+        decay = 0.5 ** (age_days / max(decay_days, 0.1))
+        return sum(v * decay for k, v in entry.items() if k != "_ts")
+
     def _prune(self, max_days: int = 30):
         """Remove entries older than max_days."""
         now = time.time()
@@ -170,10 +175,9 @@ class ErrorBook:
         total = 0
         active = 0
         for e in self._entries.values():
-            boosts = [v for k, v in e.items() if k != "_ts"]
-            total += sum(boosts)
-            if any(b * (0.5 ** ((now - e.get("_ts", now)) / 86400 / 7)) > 0.1
-                   for b in boosts):
+            boost = self._compute_boost(e, now)
+            total += boost
+            if boost > 0.1:
                 active += 1
         return {
             "entries": len(self._entries),

@@ -168,32 +168,21 @@ def plan(
                     indegree[name] += 1
                     reasoning.append(f"{name} depends_on {dep} (explicit)")
 
-    # Topological sort (Kahn's algorithm)
-    queue = deque()
+    # Topological sort (Kahn's algorithm with heapq for O(N log N))
+    import heapq
+    heap = []
     for name in steps:
         if indegree[name] == 0:
-            # Sort by routing score (higher score first)
-            queue.append(name)
+            heapq.heappush(heap, (-steps[name].score, name))
 
     ordered = []
-    while queue:
-        # Pick highest-score node with indegree 0
-        candidates = [(name, steps[name].score) for name in queue]
-        candidates.sort(key=lambda x: x[1], reverse=True)
-        node = candidates[0][0]
-
-        # Remove from queue
-        new_queue = deque()
-        for name in queue:
-            if name != node:
-                new_queue.append(name)
-        queue = new_queue
-
+    while heap:
+        _, node = heapq.heappop(heap)
         ordered.append(node)
         for neighbor in graph.get(node, []):
             indegree[neighbor] -= 1
             if indegree[neighbor] == 0:
-                queue.append(neighbor)
+                heapq.heappush(heap, (-steps[neighbor].score, neighbor))
 
     # Check for cycles
     unresolved = [name for name in steps if name not in ordered]
