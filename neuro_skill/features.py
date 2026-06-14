@@ -39,44 +39,61 @@ def query_hash(query: str) -> str:
     return hashlib.md5(key.encode()).hexdigest()[:12]
 
 
+# ── Precompiled regex cache (compiled once, reused forever) ──
+
+_REGEX_CACHE: dict[tuple[str, str], re.Pattern] = {}
+
+def _compile_regex(pattern: str) -> re.Pattern | None:
+    key = ("_compile_regex", pattern)
+    if key not in _REGEX_CACHE:
+        try:
+            _REGEX_CACHE[key] = re.compile(pattern, re.I)
+        except re.error:
+            _REGEX_CACHE[key] = None
+    return _REGEX_CACHE[key]
+
+
+_CHINESE_PATTERN = re.compile(r'[一-鿿]')
+_EN_MIXED_PATTERNS: dict[str, re.Pattern] = {}
+for kw_base in ["go", "c++", "c#"]:
+    try:
+        _EN_MIXED_PATTERNS[kw_base] = re.compile(
+            r'(?<![a-z])' + re.escape(kw_base) + r'[一-鿿]', re.I
+        )
+    except re.error:
+        pass
+
+
 def _match(text: str, keyword_map: dict[str, list[str]]) -> set[str]:
     """Match text against predefined keyword categories. One hit per category.
 
     Supports:
       - substring matching
-      - regex patterns (starting with \\b)
+      - regex patterns (starting with \\b) — precompiled, cached
       - Chinese-English mixed: "Go构建" auto-detects language features
     """
     text_lower = text.lower()
     matched = set()
 
     # 中英混合扩展: 如果文本包含中文字符,对短英文名做拼接匹配
-    has_chinese = bool(re.search(r'[一-鿿]', text_lower))
-    extra_patterns = {}
-    if has_chinese:
-        for kw_base in ["go", "c++", "c#"]:
-            if re.search(r'(?<![a-z])' + re.escape(kw_base) + r'[一-鿿]', text_lower, re.I):
-                kw_map = {"go": "go", "c++": "cpp", "c#": "csharp"}
-                extra_patterns[kw_map.get(kw_base, kw_base)] = True
+    if _CHINESE_PATTERN.search(text_lower):
+        kw_map = {"go": "go", "c++": "cpp", "c#": "csharp"}
+        for kw_base, pattern in _EN_MIXED_PATTERNS.items():
+            if pattern.search(text_lower):
+                matched.add(kw_map.get(kw_base, kw_base))
 
     for category, keywords in keyword_map.items():
         for kw in keywords:
             kw_lower = kw.lower()
-            # Regex patterns (start with \\b)
+            # Regex patterns (precompiled, cached)
             if kw_lower.startswith('\\b'):
-                try:
-                    if re.search(kw_lower, text_lower, re.I):
-                        matched.add(category)
-                        break
-                except re.error:
-                    pass
+                compiled = _compile_regex(kw_lower)
+                if compiled is not None and compiled.search(text_lower):
+                    matched.add(category)
+                    break
             elif kw_lower in text_lower:
                 matched.add(category)
                 break
-
-        # Extra: check Chinese-mixed patterns
-        if category not in matched and category in extra_patterns:
-            matched.add(category)
 
     return matched
 

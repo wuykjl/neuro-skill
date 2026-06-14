@@ -10,6 +10,14 @@ import yaml
 from pathlib import Path
 from typing import Optional
 
+# ── Precompiled regex (compiled once at import, reused millions of times) ──
+_TRIGGER_PATTERN = re.compile(
+    r"(?i)(trigger|触发|Triggers?|when to use|use when|use this)"
+)
+_HEADING_PATTERN = re.compile(r"^##\s+")
+_BULLET_PATTERN = re.compile(r"^\s*[-*]")
+_WORD_PATTERN = re.compile(r"^\w")
+
 
 def parse_frontmatter(text: str) -> tuple[dict, str]:
     """解析 YAML frontmatter,返回 (meta, body)"""
@@ -31,22 +39,20 @@ def _extract_triggers(body: str) -> str:
     triggers = []
     in_trigger = False
     for line in lines:
-        if re.search(
-            r"(?i)(trigger|触发|Triggers?|when to use|use when|use this)",
-            line,
-        ):
+        if _TRIGGER_PATTERN.search(line):
             in_trigger = True
             triggers.append(line)
         elif in_trigger:
-            if line.strip().startswith("-") or line.strip().startswith("*"):
+            stripped = line.strip()
+            if _BULLET_PATTERN.match(stripped):
                 triggers.append(line)
-            elif re.match(r"^\w", line.strip()):
+            elif _WORD_PATTERN.match(stripped):
                 in_trigger = False
 
     # Fallback: 如果没有显式 trigger 段,提取所有 ## 标题作为语义关键词
     if not triggers:
         for line in lines:
-            if re.match(r"^##\s+", line):
+            if _HEADING_PATTERN.match(line.strip()):
                 triggers.append(line.strip())
 
     return " ".join(triggers)
@@ -96,7 +102,7 @@ def load_skills(directories: list[str]) -> list[dict]:
     """
     从目录列表中加载所有 skill/agent 文件.
 
-    每个目录下扫描 *.md 文件.
+    每个目录下一次遍历——合并 *.md + */SKILL.md + symlink→SKILL.md 三种模式.
     """
     skills = []
     seen = set()
@@ -105,24 +111,23 @@ def load_skills(directories: list[str]) -> list[dict]:
         if not dp.exists():
             continue
 
-        # 两种模式:
-        #   1. 扁平目录: *.md 直接匹配 (agents 目录)
-        #   2. 子目录模式: */SKILL.md 或 */skill.md (skills 目录)
-        md_files = list(dp.glob("*.md"))
-
-        # Also resolve symlinks and find SKILL.md in subdirs
-        skill_md_files = list(dp.glob("*/SKILL.md")) + list(dp.glob("*/skill.md"))
-        # Resolve symlinks in the root dir (like lark-im -> /path/to/skills/lark-im/)
+        # Single iterdir: covers flat .md, subdir SKILL.md, and symlink→SKILL.md
+        md_files = set()
         for item in dp.iterdir():
             if item.is_symlink() and item.is_dir():
                 resolved = item.resolve()
                 smd = resolved / "SKILL.md"
-                if smd.exists():
-                    skill_md_files.append(smd)
+                if smd.is_file():
+                    md_files.add(smd)
+            elif item.is_file() and item.suffix == ".md":
+                md_files.add(item)
+            elif item.is_dir():
+                for sfx in ["SKILL.md", "skill.md"]:
+                    smd = item / sfx
+                    if smd.is_file():
+                        md_files.add(smd)
 
-        all_files = md_files + skill_md_files
-
-        for f in sorted(set(all_files)):
+        for f in sorted(md_files):
             info = parse_skill_file(f)
             if info and info["name"] not in seen:
                 seen.add(info["name"])

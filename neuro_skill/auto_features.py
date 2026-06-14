@@ -154,12 +154,8 @@ def extract_candidate_features(
 
     # ── Term frequency + IDF ──
     df = Counter()
-    tf_total = Counter()
     for tokens in docs:
-        seen = set(tokens)
-        for t in seen:
-            df[t] += 1
-        tf_total.update(tokens)
+        df.update(set(tokens))
 
     # Filter by doc frequency
     valid_terms = {}
@@ -170,8 +166,8 @@ def extract_candidate_features(
         if doc_ratio > max_df_ratio:
             continue  # too common, not discriminative
         idf = math.log((N + 1) / (doc_freq + 1)) + 1.0
-        # Bonus for multi-word terms
-        parts = len(term.split('-')) + len(term.split('/'))
+        # Bonus for multi-word terms (only count special chars if present)
+        parts = (term.count('-') + term.count('/') + 1) if ('-' in term or '/' in term) else 1
         multi_bonus = 1.0 + 0.3 * (parts - 1)
         valid_terms[term] = idf * multi_bonus
 
@@ -200,11 +196,10 @@ def extract_candidate_features(
                 cooc[i, j] += 1
                 cooc[j, i] += 1
 
-    # Convert to Jaccard similarity
-    for i in range(T):
-        row_sum = cooc[i].sum()
-        if row_sum > 0:
-            cooc[i] /= row_sum
+    # Vectorized Jaccard normalization
+    row_sums = cooc.sum(axis=1, keepdims=True)
+    row_sums[row_sums < 1e-10] = 1.0
+    cooc = cooc / row_sums
 
     # ── Greedy clustering with quality gate ──
     n_clusters = min(28, T // 2)
