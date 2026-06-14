@@ -19,11 +19,18 @@ from neuro_skill.router import SkillRouter
 from neuro_skill.routers import ROUTERS
 
 
-def cmd_build(args):
+# ── Shared loader ──
+
+def _load_or_build(dirs, rank=8):
     router = SkillRouter()
-    dirs = args.directories
-    print(f"Building index from {len(dirs)} directories...")
-    stats = router.build(dirs, rank=args.rank)
+    stats = router.build(dirs, rank=rank)
+    return router, stats
+
+
+# ── Commands ──
+
+def cmd_build(args):
+    router, stats = _load_or_build(args.directories, args.rank)
     print(f"  Skills:      {stats['n_skills']}")
     print(f"  Features:    {stats['n_features']} "
           f"(broad={stats['n_broad']}, precise={stats['n_precise']})")

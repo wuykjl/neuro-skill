@@ -414,40 +414,55 @@ def llm_rerank(query: str, skills: list[dict], top_n: int = 10,
 
     try:
         import anthropic
-        # Auto-detect API key: ANTHROPIC_API_KEY > ANTHROPIC_AUTH_TOKEN > explicit arg
         resolved_key = (
             api_key
             or _os.environ.get("ANTHROPIC_API_KEY")
             or _os.environ.get("ANTHROPIC_AUTH_TOKEN")
         )
         if not resolved_key:
-            return None  # no API key available, skip this signal
+            return None
         client = anthropic.Anthropic(
             api_key=resolved_key,
-            base_url=_os.environ.get("ANTHROPIC_BASE_URL"),  # DeepSeek proxy etc.
+            base_url=_os.environ.get("ANTHROPIC_BASE_URL"),
         )
-        # Auto-detect model from env (ANTHROPIC_MODEL or ANTHROPIC_DEFAULT_HAIKU_MODEL)
         actual_model = (
             model
             or _os.environ.get("ANTHROPIC_DEFAULT_HAIKU_MODEL")
             or _os.environ.get("ANTHROPIC_MODEL")
             or "claude-haiku-4-5-20251001"
         )
-        resp = client.messages.create(
-            model=actual_model, max_tokens=256, temperature=0.0,
-            messages=[{"role": "user", "content": prompt}],
-            thinking={"type": "disabled"},  # disable thinking models (DeepSeek V4)
-        )
-        # Handle thinking models that return ThinkingBlock alongside TextBlock
-        text = "".join(
-            block.text for block in resp.content
-            if hasattr(block, "text") and block.text
-        ).strip()
-        if text.startswith("```"):
-            text = "\n".join(text.split("\n")[1:-1])
-        ranked_names = _json.loads(text)
+
+        ranked_names = None
+        for attempt in range(2):  # one retry
+            try:
+                resp = client.messages.create(
+                    model=actual_model, max_tokens=256, temperature=0.0,
+                    messages=[{"role": "user", "content": prompt}],
+                    thinking={"type": "disabled"},
+                )
+                text = "".join(
+                    block.text for block in resp.content
+                    if hasattr(block, "text") and block.text
+                ).strip()
+                # Clean markdown fences
+                if text.startswith("```"):
+                    text = "\n".join(text.split("\n")[1:-1])
+                # Try to find a JSON array in the response
+                import re as _re
+                match = _re.search(r'\["[^"]+"(?:,\s*"[^"]+")*\]', text)
+                if match:
+                    ranked_names = _json.loads(match.group())
+                else:
+                    ranked_names = _json.loads(text)
+                break
+            except Exception:
+                if attempt == 0:
+                    continue
+                ranked_names = None
+        if ranked_names is None:
+            return None
     except Exception:
-        return None  # silent fallback — skip this signal
+        return None
 
     # Convert LLM rank order to rank array (size N)
     rank_llm = np.ones(N, dtype=np.float64) * N  # unranked = last

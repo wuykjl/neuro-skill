@@ -33,6 +33,7 @@ class SkillRouter:
         self._feedback: "ErrorBook | None" = None
         self._feedback_path = feedback_path
         self._personalize: "Personalizer | None" = None
+        self._name_idx: dict[str, int] = {}  # O(1) name→index lookup
 
     # ── Build ──
 
@@ -42,6 +43,7 @@ class SkillRouter:
         self._skills = load_skills(directories)
         if not self._skills:
             raise RuntimeError(f"No skills found in {directories}")
+        self._name_idx = {s["name"]: i for i, s in enumerate(self._skills)}
         stats = self._index.build(self._skills, rank=rank)
         self._built = True
         stats["total_time_s"] = round(time.time() - t0, 3)
@@ -50,6 +52,7 @@ class SkillRouter:
     def build_from_skills(self, skills: list[dict], rank: int = 8) -> dict:
         """Build index from pre-loaded skill dicts."""
         self._skills = skills
+        self._name_idx = {s["name"]: i for i, s in enumerate(skills)}
         self._index = SkillIndex()
         stats = self._index.build(self._skills, rank=rank)
         self._built = True
@@ -197,10 +200,8 @@ class SkillRouter:
         return [s["name"] for s in self._skills]
 
     def get_skill(self, name: str) -> dict | None:
-        for s in self._skills:
-            if s["name"] == name:
-                return s
-        return None
+        idx = self._name_idx.get(name)
+        return self._skills[idx] if idx is not None else None
 
     # ── Persist ──
 
