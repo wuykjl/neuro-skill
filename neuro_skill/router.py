@@ -32,6 +32,7 @@ class SkillRouter:
         self._built = False
         self._feedback: "ErrorBook | None" = None
         self._feedback_path = feedback_path
+        self._personalize: "Personalizer | None" = None
 
     # ── Build ──
 
@@ -91,13 +92,43 @@ class SkillRouter:
             scores = np.array(fb.adjust(query, scores.tolist(), names),
                               dtype=np.float64)
 
+            # Fourth signal: collaborative filtering personalization
+            if self._personalize is not None and self._personalize._trained:
+                p_boost = self._personalize.personalize(query)
+                if p_boost is not None and len(p_boost) == len(scores):
+                    # Insert boost as 4th RRF signal:
+                    # create a rank array where boosted skills get lower rank
+                    rank_orig = np.zeros(len(scores))
+                    order = np.argsort(-scores)
+                    for r, idx in enumerate(order):
+                        rank_orig[idx] = float(r)
+                    # Adjusted rank: original rank * (1 - 0.3 * boost)
+                    adj_rank = rank_orig * (1.0 - 0.3 * (p_boost - 0.5))
+                    # Convert back to pseudo-scores (lower rank = higher score)
+                    scores = 1.0 / (60.0 + adj_rank)
+
         order = scores.argsort()[::-1][:top_k]
         return [(self._skills[i]["name"], float(scores[i])) for i in order]
 
+    def observe(self, query: str, selected_skill: str):
+        """Record implicit feedback — user picked this skill from results."""
+        p = self._get_personalize()
+        p.observe(query, selected_skill)
+
+    def train_personalize(self):
+        """Factorize the implicit feedback matrix. Call after accumulating observations."""
+        p = self._get_personalize()
+        p.train([s["name"] for s in self._skills])
+
+    def personalize_stats(self) -> dict:
+        """Get personalization statistics."""
+        return self._get_personalize().stats()
+
     def learn(self, query: str, preferred_skill: str):
-        """Record a user correction — preferred_skill should have ranked higher."""
+        """Record a user correction — explicit + implicit feedback."""
         fb = self._get_feedback()
         fb.correct(query, preferred_skill)
+        self.observe(query, preferred_skill)
 
     def feedback_stats(self) -> dict:
         """Get Error Book statistics."""
@@ -146,6 +177,12 @@ class SkillRouter:
             from neuro_skill.feedback import ErrorBook
             self._feedback = ErrorBook(self._feedback_path)
         return self._feedback
+
+    def _get_personalize(self):
+        if self._personalize is None:
+            from neuro_skill.personalize import Personalizer
+            self._personalize = Personalizer()
+        return self._personalize
 
     # ── Info ──
 

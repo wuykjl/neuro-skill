@@ -365,6 +365,32 @@ def cmd_feedback(args):
         print(f"File: {s['file']}")
 
 
+def cmd_personalize(args):
+    """Train or inspect the CF personalization model."""
+    from neuro_skill import SkillRouter
+    router = SkillRouter()
+    router.build(args.directories)
+
+    if args.clear:
+        p = router._get_personalize()
+        p.clear()
+        print("CF data cleared.")
+        return
+
+    if args.train:
+        router.train_personalize()
+        s = router.personalize_stats()
+        print(f"Trained: {s['unique_queries']} queries, {s['total_observations']} observations")
+        print(f"n_skills: {s['n_skills']}, model: {'ALS' if s['trained'] else 'untrained'}")
+        return
+
+    # Default: show stats
+    s = router.personalize_stats()
+    print(f"CF Model: {s['unique_queries']} queries, {s['total_observations']} observations")
+    print(f"Trained: {s['trained']}, n_skills: {s['n_skills']}")
+    print(f"File: {s['file']}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="neuro-skill",
@@ -477,6 +503,18 @@ def main():
     p_fb = sub.add_parser("feedback", help="Show Error Book statistics")
     p_fb.add_argument("--clear", action="store_true", help="Reset all feedback")
 
+    # personalize
+    p_per = sub.add_parser("personalize", help="Train or check CF personalization model")
+    p_per.add_argument("--train", action="store_true", help="Train the ALS model on accumulated data")
+    p_per.add_argument("--stats", action="store_true", help="Show CF statistics")
+    p_per.add_argument("--clear", action="store_true", help="Reset all CF data")
+    p_per.add_argument("--directories", "-d", nargs="+",
+                       default=[
+                           str(Path.home() / ".claude/skills/"),
+                           str(Path.home() / ".claude/agents/"),
+                       ],
+                       help="Skill directories")
+
     args = parser.parse_args()
 
     if args.command == "build":
@@ -503,6 +541,8 @@ def main():
         cmd_learn(args)
     elif args.command == "feedback":
         cmd_feedback(args)
+    elif args.command == "personalize":
+        cmd_personalize(args)
     else:
         parser.print_help()
 
