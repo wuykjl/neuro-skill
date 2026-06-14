@@ -16,6 +16,8 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+import numpy as np
+
 from neuro_skill.parser import load_skills
 from neuro_skill.index import SkillIndex
 from neuro_skill.routers import ROUTERS as _ALL_ROUTERS
@@ -24,10 +26,12 @@ from neuro_skill.routers import ROUTERS as _ALL_ROUTERS
 class SkillRouter:
     """Hybrid skill routing engine — graph + cosine + keyword fusion."""
 
-    def __init__(self):
+    def __init__(self, feedback_path: str | None = "~/.neuro-skill-feedback.json"):
         self._skills: list[dict] = []
         self._index = SkillIndex()
         self._built = False
+        self._feedback: "ErrorBook | None" = None
+        self._feedback_path = feedback_path
 
     # ── Build ──
 
@@ -57,11 +61,13 @@ class SkillRouter:
         query: str,
         top_k: int = 10,
         method: str = "hybrid",
+        enable_feedback: bool = True,
         **kwargs,
     ) -> list[tuple[str, float]]:
         """Return top-k matching skills for a user query.
 
         Methods: hybrid, cosine, graph_spread, jaccard, keyword, tfidf
+        enable_feedback: apply Error Book corrections (default True)
         """
         if not self._built:
             raise RuntimeError("Index not built. Call .build() first.")
@@ -77,8 +83,31 @@ class SkillRouter:
             cp_factors=self._index.cp_factors,
             **kwargs,
         )
+
+        # Apply Error Book feedback adjustments
+        if enable_feedback and method == "hybrid":
+            fb = self._get_feedback()
+            names = [s["name"] for s in self._skills]
+            scores = np.array(fb.adjust(query, scores.tolist(), names),
+                              dtype=np.float64)
+
         order = scores.argsort()[::-1][:top_k]
         return [(self._skills[i]["name"], float(scores[i])) for i in order]
+
+    def learn(self, query: str, preferred_skill: str):
+        """Record a user correction — preferred_skill should have ranked higher."""
+        fb = self._get_feedback()
+        fb.correct(query, preferred_skill)
+
+    def feedback_stats(self) -> dict:
+        """Get Error Book statistics."""
+        return self._get_feedback().stats()
+
+    def _get_feedback(self):
+        if self._feedback is None:
+            from neuro_skill.feedback import ErrorBook
+            self._feedback = ErrorBook(self._feedback_path)
+        return self._feedback
 
     # ── Info ──
 

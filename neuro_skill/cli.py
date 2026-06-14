@@ -343,6 +343,29 @@ def cmd_plan(args):
     print(plan_result.to_prompt())
 
 
+def cmd_learn(args):
+    """Record a user correction into the Error Book."""
+    from neuro_skill.feedback import ErrorBook
+    book = ErrorBook()
+    book.correct(args.query, args.preferred)
+    print(f"Learned: '{args.query}' -> {args.preferred}")
+    print(book.stats())
+
+
+def cmd_feedback(args):
+    """Show Error Book statistics."""
+    from neuro_skill.feedback import ErrorBook
+    book = ErrorBook()
+    if args.clear:
+        book.clear()
+        print("Feedback cleared.")
+    else:
+        s = book.stats()
+        print(f"Error Book: {s['entries']} entries, {s['active_entries']} active")
+        print(f"Total boosts: {s['total_boosts']:.1f}")
+        print(f"File: {s['file']}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="neuro-skill",
@@ -446,6 +469,15 @@ def main():
                         ],
                         help="Skill directories")
 
+    # learn
+    p_learn = sub.add_parser("learn", help="Record a user correction (Error Book)")
+    p_learn.add_argument("query", help="The original query text")
+    p_learn.add_argument("preferred", help="The skill name the user actually chose")
+
+    # feedback
+    p_fb = sub.add_parser("feedback", help="Show Error Book statistics")
+    p_fb.add_argument("--clear", action="store_true", help="Reset all feedback")
+
     args = parser.parse_args()
 
     if args.command == "build":
@@ -468,6 +500,10 @@ def main():
         cmd_edges(args)
     elif args.command == "plan":
         cmd_plan(args)
+    elif args.command == "learn":
+        cmd_learn(args)
+    elif args.command == "feedback":
+        cmd_feedback(args)
     else:
         parser.print_help()
 
