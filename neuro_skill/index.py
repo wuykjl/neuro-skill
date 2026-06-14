@@ -77,19 +77,37 @@ def _build_feature_matrix(skills: list[dict]) -> tuple[np.ndarray, dict]:
     return F, meta
 
 
-def _build_graph(F: np.ndarray) -> np.ndarray:
+def _build_graph(F: np.ndarray, knn: int | None = None) -> np.ndarray:
     """
-    Symmetric degree normalization: G = D^(-1/2) @ A @ D^(-1/2).
+    Build skill similarity graph with symmetric degree normalization.
 
-    Symmetric normalization (Spreading Activation for RAG, 2025)
-    preserves directional symmetry during multi-step diffusion,
-    avoiding the high-degree-node bias of simple row normalization.
+    Two modes:
+      - knn=None (default): full cosine adjacency, all edges kept.
+        Works well at 150-300 skills (density ~15%).
+      - knn=k: k-nearest-neighbor graph. Only top-k edges per node kept,
+        then symmetrized. Guarantees consistent edge count regardless of
+        skill count. Recommended for N < 100 or N > 300.
+
+    Symmetric normalization: G = D^(-1/2) @ A @ D^(-1/2).
+    (Spreading Activation for RAG, 2025)
     """
     norms = np.linalg.norm(F, axis=1, keepdims=True)
     norms[norms < 1e-10] = 1.0
     F_norm = F / norms
     A = F_norm @ F_norm.T
     np.fill_diagonal(A, 0.0)  # remove self-loops
+
+    # k-NN sparsification: keep only top-k similar neighbors per node
+    if knn is not None and knn < A.shape[0] - 1:
+        N = A.shape[0]
+        k = min(knn, N - 1)
+        # For each row, zero out all but top-k values
+        for i in range(N):
+            row = A[i]
+            threshold = np.partition(row, -(k + 1))[-(k + 1)]
+            A[i, row < threshold] = 0.0
+        # Symmetrize: union of directed k-NN edges
+        A = np.maximum(A, A.T)
 
     # Symmetric degree normalization: D^(-1/2) @ A @ D^(-1/2)
     deg = A.sum(axis=1)
@@ -203,8 +221,10 @@ class SkillIndex:
         self.F, self.meta = _build_feature_matrix(skills)
         skill_feats = [extract_skill_features(s) for s in skills]
 
-        # 相似度图
-        self.G = _build_graph(self.F)
+        # 相似度图 — adaptive k-NN for consistent edge density
+        N_graph = self.F.shape[0]
+        k_adaptive = min(8, max(3, int(np.sqrt(N_graph) / 3)))
+        self.G = _build_graph(self.F, knn=k_adaptive)
 
         # 三阶张量 + CP 分解
         self.X = _build_tensor(skills, skill_feats)

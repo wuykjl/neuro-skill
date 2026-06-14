@@ -273,49 +273,62 @@ def tensor(skills: list[dict], query: str,
     return enhanced
 
 
-# ── 方法 7: 混合路由 ──
+# ── 方法 7: 混合路由 (RRF fusion) ──
 
 def hybrid(skills: list[dict], query: str,
            F: np.ndarray | None, G: np.ndarray | None,
            meta: dict | None, **kw) -> np.ndarray:
     """
-    Hybrid routing with adaptive graph weights.
+    Reciprocal Rank Fusion (RRF) — the standard hybrid fusion algorithm
+    used by OpenSearch, Azure AI Search, Weaviate, Pinecone.
 
-    Weight adaptation (continuous, inspired by Hermes 332-skill test):
-      - density ~15% (sweet spot): cos=0.40, graph=0.40, kw=0.20
-      - density < 5% (too sparse) or > 60% (too dense): graph decays to ~0
-      - Gaussian decay from optimum, sigma=0.10
+    Replaces min-max normalization + weighted sum with rank-based fusion.
+    RRF is insensitive to raw score distributions (BM25: 0~15,
+    cosine: -1~1, graph: ~0.001) — only rank position matters.
+
+    RRF_score(d) = sum over methods of 1 / (k + rank_i(d))
+    where k=60 (standard constant, from OpenSearch/Azure documentation).
+
+    This also eliminates the need for adaptive weight tuning — RRF
+    self-adapts to any graph density, skill count, or score distribution.
     """
-    import math as _math
     N = len(skills)
+    K = 60  # RRF constant (OpenSearch/Azure standard)
 
-    # Compute graph density for adaptive weighting
-    if G is not None and G.size > 0:
-        nz = float((G > 0).sum())
-        density = nz / G.size
-    else:
-        density = 0.0
-
-    # Gaussian: peak at density=0.15, decay on both sides
-    sigma = 0.10
-    graph_factor = _math.exp(-((density - 0.15) ** 2) / (2 * sigma * sigma))
-    w_graph_auto = 0.40 * graph_factor
-    w_cos_auto = 0.40 + (0.40 - w_graph_auto) * 0.5
-    w_kw_auto  = 0.20 + (0.40 - w_graph_auto) * 0.5
-
-    w_cos = kw.get("w_cos", w_cos_auto)
-    w_graph = kw.get("w_graph", w_graph_auto)
-    w_kw = kw.get("w_kw", w_kw_auto)
-
+    # Compute all three signal vectors
+    s_bm25 = keyword(skills, query)
     s_cos = cosine(skills, query, F=F, meta=meta)
     s_graph = graph_spread(skills, query, G=G, F=F, meta=meta, **kw)
-    s_kw = keyword(skills, query)
 
-    fused = (w_cos * _normalize(s_cos)
-             + w_graph * _normalize(s_graph)
-             + w_kw * _normalize(s_kw))
+    # Convert scores to ranks (0 = highest score)
+    # argsort ascending → flip to get descending rank
+    rank_bm25 = np.zeros(N, dtype=np.float64)
+    rank_cos = np.zeros(N, dtype=np.float64)
+    rank_graph = np.zeros(N, dtype=np.float64)
 
-    return _normalize(fused)
+    # argsort returns indices sorted by value ascending
+    # we want rank 0 = highest score, so we reverse
+    for rank_arr, scores in [
+        (rank_bm25, s_bm25), (rank_cos, s_cos), (rank_graph, s_graph)
+    ]:
+        order = np.argsort(-scores)  # descending
+        for rank, idx in enumerate(order):
+            rank_arr[idx] = float(rank)
+
+    # Filter out methods that returned all zeros (no signal)
+    active = 0
+    rrf = np.zeros(N, dtype=np.float64)
+    for rank_arr in [rank_bm25, rank_cos, rank_graph]:
+        if rank_arr.max() > 0 or not np.allclose(s_bm25 if rank_arr is rank_bm25
+                    else s_cos if rank_arr is rank_cos else s_graph, 0):
+            rrf += 1.0 / (K + rank_arr)
+            active += 1
+
+    # If no signal at all, return uniform
+    if active == 0:
+        return np.ones(N) / N
+
+    return rrf
 
 
 # ── 路由注册表 ──

@@ -48,6 +48,22 @@ def cmd_build(args):
         print(f"  *** Warning: {n_features} features < sqrt({n_skills})={min_feats}. "
               f"Consider adding domain-specific extras.")
 
+    # Show skills with zero feature matches (actionable guidance)
+    from neuro_skill.features import extract_skill_features
+    empty_skills = []
+    for s in router._skills:
+        sf = extract_skill_features(s)
+        if not sf["broad"] and not sf["precise"]:
+            empty_skills.append(s["name"])
+    if empty_skills:
+        shown = empty_skills[:8]
+        print(f"  *** {len(empty_skills)} skills have ZERO feature matches:")
+        for sn in shown:
+            print(f"        - {sn}")
+        if len(empty_skills) > 8:
+            print(f"        ... and {len(empty_skills) - 8} more")
+        print(f"  *** Add keywords for these skills in extras_template.py")
+
     if args.output:
         router.save(args.output)
         print(f"  Saved to:    {args.output}")
