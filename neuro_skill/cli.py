@@ -27,9 +27,26 @@ def cmd_build(args):
     print(f"  Skills:      {stats['n_skills']}")
     print(f"  Features:    {stats['n_features']} "
           f"(broad={stats['n_broad']}, precise={stats['n_precise']})")
-    print(f"  Graph dense: {stats['graph_density']:.1%}")
+    import math as _math
+    density = stats.get('graph_density', 0)
+    n_features = stats['n_features']
+    n_skills = stats['n_skills']
+    min_feats = int(_math.sqrt(n_skills))
+
+    print(f"  Graph dense: {density:.1%}", end="")
+    if density > 0.60:
+        print(" (spreading activation offline — too dense)")
+    elif density < 0.01:
+        print(" (spreading activation offline — too sparse)")
+    else:
+        print("")
+
     print(f"  CP rank:     {stats['rank']}")
     print(f"  Build time:  {stats['build_time_s']}s")
+
+    if n_features < min_feats:
+        print(f"  *** Warning: {n_features} features < sqrt({n_skills})={min_feats}. "
+              f"Consider adding domain-specific extras.")
 
     if args.output:
         router.save(args.output)

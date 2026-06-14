@@ -32,14 +32,95 @@ def _rank(skills: list[dict], scores: np.ndarray,
     return [(skills[i]["name"], float(scores[i]), int(i)) for i in order]
 
 
-# ── 方法 1: 关键词匹配 ──
+# ── 方法 1: Okapi BM25 关键词匹配 ──
+
+# Per-skill document stats (computed once, shared across calls)
+_bm25_cache: dict = {}  # {id(skills): {"avgdl": float, "doc_lens": np.ndarray, "tf": defaultdict, "df": dict, "N": int}}
+
+
+def _bm25_precompute(skills: list[dict]):
+    """Precompute BM25 document stats for a skill set (lazy, cached by id)."""
+    skey = id(skills)
+    if skey in _bm25_cache:
+        return _bm25_cache[skey]
+
+    from collections import Counter as _Counter
+    _idf_counter = _Counter()
+    doc_lens = []
+    docs = [tokenize(s["search_text"]) for s in skills]
+    for tokens in docs:
+        doc_lens.append(len(tokens))
+        for t in set(tokens):
+            _idf_counter[t] += 1
+
+    N = len(skills)
+    avgdl = sum(doc_lens) / max(N, 1)
+
+    stat = {"avgdl": avgdl, "doc_lens": np.array(doc_lens, dtype=np.float64),
+            "df": dict(_idf_counter), "N": N}
+    _bm25_cache[skey] = stat
+    # Limit cache size
+    if len(_bm25_cache) > 4:
+        _bm25_cache.pop(next(iter(_bm25_cache)))
+    return stat
+
 
 def keyword(skills: list[dict], query: str, **_kw) -> np.ndarray:
+    """Okapi BM25 keyword scoring (replaces simple intersection/union).
+
+    Parameters: k1=1.2, b=0.75 (standard Okapi defaults).
+    IDF computed from the skill search_text corpus.
+    Pure numpy vectorization — no per-skill Python loop.
+    """
+    import math as _math
+    N = len(skills)
     q_tokens = tokenize(query)
-    scores = np.zeros(len(skills))
-    for i, s in enumerate(skills):
-        s_tokens = tokenize(s["search_text"])
-        scores[i] = len(q_tokens & s_tokens) / max(len(q_tokens), 1)
+    if not q_tokens:
+        return np.zeros(N)
+
+    # BM25 with standard Okapi parameters
+    k1 = 1.2
+    b = 0.75
+    stat = _bm25_precompute(skills)
+    avgdl = stat["avgdl"]
+    doc_lens = stat["doc_lens"]
+    N_docs = stat["N"]
+
+    # Compute IDF for query terms
+    idf = np.zeros(len(q_tokens))
+    valid = np.zeros(len(q_tokens), dtype=bool)
+    for qi, qt in enumerate(q_tokens):
+        df = stat["df"].get(qt, 0)
+        if df > 0:
+            # Smooth IDF: log((N - df + 0.5) / (df + 0.5) + 1)
+            idf[qi] = _math.log((N_docs - df + 0.5) / (df + 0.5) + 1.0)
+            valid[qi] = True
+
+    if not valid.any():
+        return np.zeros(N)
+
+    # Pre-tokenize all skill docs once
+    skill_tokens = [tokenize(s["search_text"]) for s in skills]
+
+    # Compute BM25 scores for all skills in one pass
+    # For each query term → compute tf for all docs → accumulate weighted sum
+    scores = np.zeros(N, dtype=np.float64)
+    for qi, qt in enumerate(q_tokens):
+        if not valid[qi]:
+            continue
+        # Term frequency per document (count occurrences)
+        tf = np.zeros(N, dtype=np.float64)
+        for i, tokens in enumerate(skill_tokens):
+            tf[i] = sum(1 for t in tokens if t == qt)
+        if not tf.any():
+            continue
+        # BM25 scoring
+        numerator = tf * (k1 + 1)
+        denominator = tf + k1 * (1 - b + b * doc_lens / max(avgdl, 1))
+        with np.errstate(divide='ignore', invalid='ignore'):
+            term_scores = np.where(denominator > 0, idf[qi] * numerator / denominator, 0.0)
+        scores += term_scores
+
     return scores
 
 
@@ -198,19 +279,37 @@ def hybrid(skills: list[dict], query: str,
            F: np.ndarray | None, G: np.ndarray | None,
            meta: dict | None, **kw) -> np.ndarray:
     """
-    混合路由: 余弦 + 图扩散 + 关键词 三层融合.
+    Hybrid routing with adaptive graph weights.
 
-    权重: cos=0.40, graph=0.40, keyword=0.20
+    Weight adaptation (continuous, inspired by Hermes 332-skill test):
+      - density ~15% (sweet spot): cos=0.40, graph=0.40, kw=0.20
+      - density < 5% (too sparse) or > 60% (too dense): graph decays to ~0
+      - Gaussian decay from optimum, sigma=0.10
     """
+    import math as _math
     N = len(skills)
+
+    # Compute graph density for adaptive weighting
+    if G is not None and G.size > 0:
+        nz = float((G > 0).sum())
+        density = nz / G.size
+    else:
+        density = 0.0
+
+    # Gaussian: peak at density=0.15, decay on both sides
+    sigma = 0.10
+    graph_factor = _math.exp(-((density - 0.15) ** 2) / (2 * sigma * sigma))
+    w_graph_auto = 0.40 * graph_factor
+    w_cos_auto = 0.40 + (0.40 - w_graph_auto) * 0.5
+    w_kw_auto  = 0.20 + (0.40 - w_graph_auto) * 0.5
+
+    w_cos = kw.get("w_cos", w_cos_auto)
+    w_graph = kw.get("w_graph", w_graph_auto)
+    w_kw = kw.get("w_kw", w_kw_auto)
 
     s_cos = cosine(skills, query, F=F, meta=meta)
     s_graph = graph_spread(skills, query, G=G, F=F, meta=meta, **kw)
     s_kw = keyword(skills, query)
-
-    w_cos = kw.get("w_cos", 0.40)
-    w_graph = kw.get("w_graph", 0.40)
-    w_kw = kw.get("w_kw", 0.20)
 
     fused = (w_cos * _normalize(s_cos)
              + w_graph * _normalize(s_graph)

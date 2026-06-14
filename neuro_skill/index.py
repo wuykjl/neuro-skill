@@ -78,15 +78,27 @@ def _build_feature_matrix(skills: list[dict]) -> tuple[np.ndarray, dict]:
 
 
 def _build_graph(F: np.ndarray) -> np.ndarray:
-    """构建技能相似度图 (行归一化),用于扩散激活"""
+    """
+    Symmetric degree normalization: G = D^(-1/2) @ A @ D^(-1/2).
+
+    Symmetric normalization (Spreading Activation for RAG, 2025)
+    preserves directional symmetry during multi-step diffusion,
+    avoiding the high-degree-node bias of simple row normalization.
+    """
     norms = np.linalg.norm(F, axis=1, keepdims=True)
     norms[norms < 1e-10] = 1.0
     F_norm = F / norms
-    G = F_norm @ F_norm.T
-    np.fill_diagonal(G, 0.0)  # 去自环
-    row_sums = G.sum(axis=1, keepdims=True)
-    row_sums[row_sums < 1e-10] = 1.0
-    return G / row_sums
+    A = F_norm @ F_norm.T
+    np.fill_diagonal(A, 0.0)  # remove self-loops
+
+    # Symmetric degree normalization: D^(-1/2) @ A @ D^(-1/2)
+    deg = A.sum(axis=1)
+    deg[deg < 1e-10] = 1.0
+    d_inv_sqrt = 1.0 / np.sqrt(deg)
+    D_inv_half = np.diag(d_inv_sqrt)
+    G = D_inv_half @ A @ D_inv_half
+
+    return G
 
 
 def _build_tensor(skills: list[dict], skill_feats: list) -> np.ndarray:

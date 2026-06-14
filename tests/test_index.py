@@ -58,9 +58,11 @@ class TestSkillIndex:
         idx = SkillIndex()
         idx.build(skills)
         assert idx.G.shape == (20, 20)
-        # Row-stochastic (each row sums to ~1)
-        row_sums = idx.G.sum(axis=1)
-        assert np.allclose(row_sums[row_sums > 0], 1.0, atol=0.01)
+        # Symmetric normalization: G = D^(-1/2) @ A @ D^(-1/2)
+        # Matrix should be symmetric with values in [-1, 1]
+        assert np.allclose(idx.G, idx.G.T, atol=0.001)   # symmetric
+        assert idx.G.max() <= 1.0
+        assert idx.G.min() >= -0.01
 
     def test_tensor_shape(self):
         skills = _mock_skills(20)
