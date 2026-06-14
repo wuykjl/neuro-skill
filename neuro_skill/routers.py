@@ -45,7 +45,34 @@ def keyword(skills: list[dict], query: str, **_kw) -> np.ndarray:
 
 # ── 方法 2: 特征 Jaccard ──
 
-def jaccard(skills: list[dict], query: str, **_kw) -> np.ndarray:
+def jaccard(skills: list[dict], query: str, F: np.ndarray | None = None, **_kw) -> np.ndarray:
+    """Vectorized Jaccard using pre-computed feature matrix F.
+
+    Without F (cold path): falls back to per-skill Python loop (~25ms).
+    With F (hot path): pure numpy, ~0.5ms.
+    """
+    if F is not None and _kw.get("meta"):
+        # Hot path: use pre-computed feature vectors
+        meta = _kw["meta"]
+        qf = extract_query_features(query)
+        qv = np.zeros(F.shape[1])
+        for b in qf["broad"]:
+            if b in meta["broad"]:
+                qv[meta["broad"][b]] = 1.0
+        for p in qf["precise"]:
+            if p in meta["precise"]:
+                qv[meta["precise"][p]] = 1.5
+        # Jaccard = intersection / union for binary vectors
+        # For each skill i: AND(qv, F[i]) / OR(qv, F[i])
+        F_binary = (F > 0).astype(np.float64)
+        q_binary = (qv > 0).astype(np.float64)
+        intersection = F_binary @ q_binary  # (N,) — number of shared features
+        union = F_binary.sum(axis=1) + q_binary.sum() - intersection  # (N,)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            scores = np.where(union > 0, intersection / union, 0.0)
+        return scores.astype(np.float64)
+
+    # Cold path: per-skill loop (fallback)
     qf = extract_query_features(query)
     q_set = feature_set(qf)
     scores = np.zeros(len(skills))
@@ -108,18 +135,22 @@ def graph_spread(skills: list[dict], query: str,
     steps = kw.get("graph_steps", 3)
     decay = kw.get("graph_decay", 0.5)
 
-    qf = extract_query_features(query)
-    q_set = feature_set(qf)
-
-    # 初始激活
-    activation = np.zeros(N)
-    for i, s in enumerate(skills):
-        s_set = feature_set(extract_skill_features(s))
-        if q_set or s_set:
-            activation[i] = len(q_set & s_set) / max(len(q_set | s_set), 1)
+    # Vectorized initial activation: use jaccard with F if available
+    F_mat = kw.pop("F", None)
+    meta_d = kw.pop("meta", None)
+    if F_mat is not None and meta_d is not None:
+        activation = jaccard(skills, query, F=F_mat, meta=meta_d, **kw)
+    else:
+        qf = extract_query_features(query)
+        q_set = feature_set(qf)
+        activation = np.zeros(N)
+        for i, s in enumerate(skills):
+            s_set = feature_set(extract_skill_features(s))
+            if q_set or s_set:
+                activation[i] = len(q_set & s_set) / max(len(q_set | s_set), 1)
     if activation.sum() < 1e-10:
         activation = np.ones(N) / N
-    activation /= max(activation.sum(), 1.0)
+    activation = activation / max(activation.sum(), 1.0)
 
     total = activation.copy()
     current = activation.copy()
@@ -174,7 +205,7 @@ def hybrid(skills: list[dict], query: str,
     N = len(skills)
 
     s_cos = cosine(skills, query, F=F, meta=meta)
-    s_graph = graph_spread(skills, query, G=G, **kw)
+    s_graph = graph_spread(skills, query, G=G, F=F, meta=meta, **kw)
     s_kw = keyword(skills, query)
 
     w_cos = kw.get("w_cos", 0.40)

@@ -187,6 +187,34 @@ def cmd_discover_features(args):
           f"from {stats['n_skills']} skills")
 
 
+def cmd_serve(args):
+    """启动内存常驻服务器"""
+    from neuro_skill.server import cmd_serve as _serve_main
+    import sys as _sys
+    _sys.argv = ["neuro-skill-serve"]
+    if args.socket:
+        _sys.argv.extend(["--socket", args.socket])
+    else:
+        _sys.argv.extend(["--port", str(args.port)])
+    _sys.argv.extend(["--dirs"] + args.directories)
+    from neuro_skill.server import _SkillServer, _QueryHandler
+    from http.server import HTTPServer
+
+    dirs = [str(Path(d).expanduser()) for d in args.directories]
+    svr = _SkillServer(dirs)
+    print(f"neuro-skill server: {svr.stats['n_skills']} skills, {svr.build_ms:.0f}ms build")
+    print(f"Listening on http://localhost:{args.port}")
+    print(f"  curl 'http://localhost:{args.port}/query?q=Go+build+error&k=5'")
+    print(f"  curl 'http://localhost:{args.port}/health'")
+
+    httpd = HTTPServer(("127.0.0.1", args.port), _QueryHandler)
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print(f"\nShutting down.")
+        httpd.shutdown()
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="neuro-skill",
@@ -249,6 +277,18 @@ def main():
                         help="Skill directories")
     p_disc.add_argument("-o", "--output", help="Output Python file path")
 
+    # serve
+    p_serve = sub.add_parser("serve", help="Start memory-resident server")
+    p_serve.add_argument("--directories", "-d", nargs="+",
+                         default=[
+                             str(Path.home() / ".claude/skills/"),
+                             str(Path.home() / ".claude/agents/"),
+                             str(Path.home() / ".claude/.agents/skills/"),
+                         ],
+                         help="Skill directories")
+    p_serve.add_argument("--port", "-p", type=int, default=8765, help="HTTP port")
+    p_serve.add_argument("--socket", "-s", help="Unix socket path (faster than HTTP for local IPC)")
+
     args = parser.parse_args()
 
     if args.command == "build":
@@ -263,6 +303,8 @@ def main():
         cmd_diagnose(args)
     elif args.command == "discover-features":
         cmd_discover_features(args)
+    elif args.command == "serve":
+        cmd_serve(args)
     else:
         parser.print_help()
 
