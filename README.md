@@ -142,6 +142,22 @@ neuro-skill eval queries.json -d ./skills/ ./agents/
 neuro-skill diagnose -d ./skills/ ./agents/  # find miss cases
 ```
 
+## Supported Editors & Agents
+
+| Tool | Integration | Method |
+|------|------------|--------|
+| **Claude Code** | `neuro-skill install claude` | MCP (4 tools: query, compare, status, predict) |
+| **Cursor** | `neuro-skill install cursor` | MCP |
+| **Codex CLI** | `neuro-skill install codex` | MCP |
+| **Hermes** | Third-party validated (332 skills) | Adapter script |
+| **Windsurf** | Edit `.windsurf/mcp.json` | MCP |
+| **Continue** | Edit `~/.continue/mcp.json` | MCP |
+| **GitHub Copilot** | `curl localhost:8765/query` | HTTP |
+| **JetBrains AI** | `curl localhost:8765/query` | HTTP |
+| **Any Python script** | `from neuro_skill import query` | Python API |
+| **Any shell / CI** | `neuro-skill query "..."` | CLI |
+| **OpenCode / Kiro / Aider** | Edit their MCP config | MCP |
+
 ## Feature System
 
 Three-tier design:
