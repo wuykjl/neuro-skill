@@ -181,7 +181,8 @@ class SkillRouter:
     def _get_personalize(self):
         if self._personalize is None:
             from neuro_skill.personalize import Personalizer
-            self._personalize = Personalizer()
+            path = str(self._feedback_path).replace("-feedback", "-personalize") if self._feedback_path else "~/.neuro-skill-personalize.json"
+            self._personalize = Personalizer(path)
         return self._personalize
 
     # ── Info ──

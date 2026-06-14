@@ -21,23 +21,11 @@ Usage:
 
 from __future__ import annotations
 
-import json, hashlib, time, os, re
+import json, time, os, threading
 from pathlib import Path
-from collections import defaultdict
 from typing import Optional
 
-
-def _query_hash(query: str) -> str:
-    """Stable hash: normalize → hash first 3 meaningful tokens.
-
-    Two queries that share the same key concept words
-    should hit the same feedback entry, even if phrased differently.
-    """
-    # Extract meaningful tokens (3+ chars, filter short/common words)
-    tokens = re.findall(r'[a-z]{3,}|[一-鿿]{2,4}', query.lower())
-    # Take first 5 tokens (captures the core intent)
-    key = " ".join(tokens[:5]) if tokens else query.lower()[:30]
-    return hashlib.md5(key.encode()).hexdigest()[:12]
+from neuro_skill.features import query_hash
 
 
 class ErrorBook:
@@ -66,12 +54,15 @@ class ErrorBook:
                     self._entries = {}
             self._loaded = True
 
+    _write_lock = threading.Lock()
+
     def _save(self):
         self._path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self._entries, ensure_ascii=False, indent=2),
-                       encoding="utf-8")
-        tmp.replace(self._path)  # atomic on POSIX, best-effort on Windows
+        with self._write_lock:
+            tmp.write_text(json.dumps(self._entries, ensure_ascii=False, indent=2),
+                           encoding="utf-8")
+            tmp.replace(self._path)  # atomic on POSIX, best-effort on Windows
 
     def correct(
         self,
@@ -89,7 +80,7 @@ class ErrorBook:
           timestamp: unix time (default: now)
         """
         self._load()
-        qhash = _query_hash(query)
+        qhash = query_hash(query)
         ts = timestamp or time.time()
 
         if qhash not in self._entries:
@@ -129,7 +120,7 @@ class ErrorBook:
         if not self._entries:
             return scores
 
-        qhash = _query_hash(query)
+        qhash = query_hash(query)
         if qhash not in self._entries:
             return scores
 

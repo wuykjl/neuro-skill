@@ -26,19 +26,14 @@ Usage:
 
 from __future__ import annotations
 
-import os, json, time, hashlib, re
+import os, json, time, threading
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
 from collections import defaultdict
 
-
-def query_key(query: str) -> str:
-    """Stable, language-agnostic hash. Same as ErrorBook's hash."""
-    tokens = re.findall(r'[a-z]{3,}|[一-鿿]{2,4}', query.lower())
-    key = " ".join(tokens[:5]) if tokens else query.lower()[:30]
-    return hashlib.md5(key.encode()).hexdigest()[:12]
+from neuro_skill.features import query_hash as query_key
 
 
 class Personalizer:

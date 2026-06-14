@@ -1,7 +1,8 @@
 """Test Error Book feedback mechanism."""
 import time, tempfile, os
 from pathlib import Path
-from neuro_skill.feedback import ErrorBook, _query_hash
+from neuro_skill.feedback import ErrorBook
+from neuro_skill.features import query_hash as _query_hash
 
 
 class TestQueryHash:

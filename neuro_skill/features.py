@@ -6,6 +6,7 @@ They can be safely mutated to add user or auto-discovered features.
 """
 
 import re
+import hashlib
 
 # Initialize from base — use dict() to create independent copies
 from neuro_skill.base_features import BROAD as _BASE_BROAD, PRECISE as _BASE_PRECISE
@@ -22,6 +23,20 @@ def tokenize(text: str) -> set[str]:
     tokens.update(re.findall(r"\w{2,}", text.lower()))
     tokens.update(re.findall(r"[一-鿿]{2,6}", text.lower()))
     return tokens
+
+
+# ── Shared query hash (used by Feedback, Personalize, ErrorBook) ──
+
+def query_hash(query: str) -> str:
+    """Stable hash for a query — same intent → same key.
+
+    Two queries that share the same key concept words produce the
+    same hash, so feedback and personalization transfer across
+    differently-phrased but semantically identical queries.
+    """
+    tokens = re.findall(r'[a-z]{3,}|[一-鿿]{2,4}', query.lower())
+    key = " ".join(tokens[:5]) if tokens else query.lower()[:30]
+    return hashlib.md5(key.encode()).hexdigest()[:12]
 
 
 def _match(text: str, keyword_map: dict[str, list[str]]) -> set[str]:
