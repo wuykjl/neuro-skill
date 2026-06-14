@@ -92,12 +92,12 @@ BROAD = {
     ],
 }
 
-# 29 languages / frameworks / actions
+# 32 languages / frameworks / actions
 PRECISE = {
     "python": ["python", "django", "fastapi", "pytorch", "tkinter", "pep", "pip"],
     "javascript_ts": ["javascript", "typescript", "jsx", "tsx", "node.js",
                        "npm", "yarn", "pnpm", "bun", "next.js"],
-    "react_specific": ["react ", "jsx", "react native", "hook"],
+    "react_specific": ["react", "jsx", "react native", "hook", "react组件", "前端react"],
     "go": ["golang", r"\bgo\b", "go build", "go mod", "goroutine", "go语言", "go项目"],
     "rust": ["rust", "cargo", "rustc", "tokio", "serde", "rust语言"],
     "java": ["java ", "spring", "maven", "gradle", "jvm", "hibernate", "java语言", "java项目"],
@@ -111,12 +111,15 @@ PRECISE = {
     "shell": ["bash", "shell", "powershell", "cmd", "bash脚本"],
     "build_fix": ["build error", "compilation", "构建错误", "编译失败",
                   "构建失败", "build failed", "compile error", "构建报错",
-                  "编译报错", "build报错", "cmake失败", "编译不通过"],
+                  "编译报错", "build报错", "cmake失败", "编译不通过",
+                  "编译问题", "构建问题", "编译出错"],
     "security_scan": ["漏洞扫描", "安全审计", "security scan", "渗透",
                        "penetration", "vulnerability scan", "sql注入",
-                       "xss攻击", "csrf漏洞", "注入漏洞"],
+                       "xss攻击", "csrf漏洞", "注入漏洞", "扫描安全",
+                       "安全扫描", "扫描漏洞", "安全漏洞", "检查安全"],
     "performance": ["performance", "optimize", "bottleneck", "性能", "优化",
-                     "太慢", "慢", "slow", "latency", "查询优化", "数据库优化"],
+                     "太慢", "慢", "slow", "latency", "查询优化", "数据库优化",
+                     "加速", "提速", "性能优化", "跑得快", "更快"],
     "architect": ["architecture", "architect", "system design",
                     "架构", "微服务", "microservice", "design pattern",
                     "架构设计", "系统设计"],
@@ -140,4 +143,16 @@ PRECISE = {
     "ecc_rules": ["ECC", "ecc", "rule config", "规则配置", "编码规范配置",
                   "coding standard config", "standard enforcement", "规范落地",
                   "coding rule", "编码规则"],
+    # Container & cloud ops
+    "container_ops": ["docker", "kubernetes", "k8s", "容器", "容器化",
+                      "部署", "编排", "docker-compose", "helm", "containerd",
+                      "云部署", "集群", "微服务"],
+    # Communication & messaging
+    "communication": ["发消息", "发送消息", "发邮件", "聊天", "群聊",
+                      "即时通讯", "通知", "消息推送", "send message",
+                      "messaging", "chat", "notification"],
+    # Data infrastructure
+    "data_ops": ["redis", "kafka", "terraform", "elasticsearch", "消息队列",
+                 "缓存", "cache", "队列", "etcd", "consul", "zookeeper",
+                 "nginx", "负载均衡", "反向代理"],
 }

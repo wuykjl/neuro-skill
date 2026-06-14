@@ -101,7 +101,7 @@ def test_regex_pattern():
 def test_broad_precise_feature_count():
     """Ensure base features exist."""
     assert len(BROAD) == 17, f"Expected 17 broad, got {len(BROAD)}"
-    assert len(PRECISE) == 29, f"Expected 29 precise, got {len(PRECISE)}"
+    assert len(PRECISE) == 32, f"Expected 32 precise, got {len(PRECISE)}"
 
 
 def test_ecc_rule_features():
