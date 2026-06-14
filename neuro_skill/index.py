@@ -43,13 +43,37 @@ def _cat_features(feats: dict[str, set[str]], cat: int) -> set[str]:
         return all_f & _ACTION_KEYS
 
 
-def _build_feature_matrix(skills: list[dict]) -> tuple[np.ndarray, dict]:
-    """
-    构建特征矩阵 F: N × M
+def _compute_feature_weights(F_binary: np.ndarray) -> np.ndarray:
+    """IG weighting: rare features (few skills) → high weight. Common → low."""
+    N = F_binary.shape[0]
+    if N == 0:
+        return np.ones(F_binary.shape[1])
+    p = np.clip(F_binary.sum(axis=0) / N, 0.0, 1.0)
+    # Rare features (p→0) → high weight; Common features (p→1) → low weight
+    # factor = 0.3 + 1.5 * (1 - p) yields [0.3, 1.8]
+    return 0.3 + 1.5 * (1.0 - p)
 
-    M = len(all_broad) + len(all_precise)
-    precise 特征权重 ×1.5
-    """
+
+def _feature_diagnostics(F_binary, ig, all_broad, all_precise, skill_feats):
+    """Per-feature coverage and per-skill feature count."""
+    N = F_binary.shape[0]
+    coverage = F_binary.sum(axis=0) / max(N, 1)
+    all_features = all_broad + all_precise
+    high_freq = [(all_features[j], round(float(coverage[j]), 2))
+                 for j in range(F_binary.shape[1]) if coverage[j] > 0.80]
+    per_skill = F_binary.sum(axis=1).astype(int).tolist()
+    low_skill = [(i, int(per_skill[i])) for i in range(N) if per_skill[i] < 2]
+    # Also compute zero-feature skills (same as low_skill with count=0)
+    zero_skill = [(i, 0) for i in range(N) if per_skill[i] == 0]
+    return {
+        "high_freq_features": high_freq,
+        "low_coverage_skills": low_skill,
+        "zero_features_count": len(zero_skill),
+    }
+
+
+def _build_feature_matrix(skills: list[dict]) -> tuple[np.ndarray, dict]:
+    """Build F: N x M with IG weights. Broad=1.0, precise=1.5, both * IG."""
     skill_feats = [extract_skill_features(s) for s in skills]
     N = len(skills)
 
@@ -60,12 +84,18 @@ def _build_feature_matrix(skills: list[dict]) -> tuple[np.ndarray, dict]:
     precise_idx = {n: i + len(all_broad) for i, n in enumerate(all_precise)}
 
     M = len(all_broad) + len(all_precise)
-    F = np.zeros((N, M), dtype=np.float64)
+    F_binary = np.zeros((N, M), dtype=np.float64)
     for i, f in enumerate(skill_feats):
         for b in f["broad"]:
-            F[i, broad_idx[b]] = 1.0
+            F_binary[i, broad_idx[b]] = 1.0
         for p in f["precise"]:
-            F[i, precise_idx[p]] = 1.5
+            F_binary[i, precise_idx[p]] = 1.0
+
+    ig = _compute_feature_weights(F_binary)
+    F = F_binary.copy()
+    for p_idx in precise_idx.values():
+        F[:, p_idx] *= 1.5
+    F = F * ig[np.newaxis, :]
 
     meta = {
         "broad": broad_idx,
@@ -73,6 +103,8 @@ def _build_feature_matrix(skills: list[dict]) -> tuple[np.ndarray, dict]:
         "all_broad": all_broad,
         "all_precise": all_precise,
         "M": M,
+        "ig_weights": ig,
+        "diagnostics": _feature_diagnostics(F_binary, ig, all_broad, all_precise, skill_feats),
     }
     return F, meta
 
@@ -241,6 +273,16 @@ class SkillIndex:
             ),
             "rank": len(self.cp_weights),
             "build_time_s": round(elapsed, 3),
+            "diagnostics": {
+                "high_freq_features": [
+                    (f, c) for f, c in self.meta.get("diagnostics", {}).get("high_freq_features", [])
+                ],
+                "low_coverage_skills": [
+                    (skills[i]["name"], c) for i, c in
+                    self.meta.get("diagnostics", {}).get("low_coverage_skills", [])
+                ],
+                "zero_features_count": self.meta.get("diagnostics", {}).get("zero_features_count", 0),
+            },
         }
 
     def get_idx(self, name: str) -> int | None:

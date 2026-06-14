@@ -262,6 +262,70 @@ SKILL LIST:
 Return ONLY JSON: {{"broad": {{...}}, "precise": {{...}}}}"""
 
 
+# ── Two-round LLM: generate → self-test → fix ──
+
+def llm_two_round_generate(skill_dirs, api_key=None, model="claude-haiku-4-5-20251001"):
+    """Round 1 generates features. Self-test finds misses. Round 2 fixes them."""
+    skills = load_skills(skill_dirs)
+    print(f"Round 1: generating features for {len(skills)} skills...")
+    r1 = llm_extract_features(skills, api_key=api_key, model=model)
+    if "error" in r1:
+        return r1
+    r1b, r1p = r1.get("broad", {}), r1.get("precise", {})
+
+    import neuro_skill.features as fmod
+    fmod.BROAD.clear(); fmod.BROAD.update(r1b)
+    fmod.PRECISE.clear(); fmod.PRECISE.update(r1p)
+    from neuro_skill import SkillRouter
+    router = SkillRouter(); router.build_from_skills(skills)
+
+    misses, total = [], 0
+    for s in skills:
+        q = s.get("description", s["name"])[:90]
+        r = router.query(q, top_k=3)
+        if r and r[0][0] == s["name"]:
+            total += 1
+        elif s["name"] not in [x[0] for x in r]:
+            misses.append(s["name"])
+    print(f"  Self-test: {total}/{len(skills)} hit@1, {len(misses)} misses")
+
+    if not misses or not (api_key or os.environ.get("ANTHROPIC_API_KEY")):
+        return {"broad": r1b, "precise": r1p, "round1_hit": round(total/max(len(skills), 1), 3), "source": "llm-r1-only"}
+
+    print(f"Round 2: fixing {len(misses)} misses...")
+    ms = [s for s in skills if s["name"] in misses]
+    ml = [f"{s['name']}: {s.get('description','')[:100]}" for s in ms]
+    bl = [f"  {k}: {', '.join(v[:8])}" for k, v in sorted(r1b.items())]
+    pl = [f"  {k}: {', '.join(v[:6])}" for k, v in sorted(r1p.items())]
+    fix_prompt = f"""These skills were missed by the first feature generation. Add features to fix them.
+
+MISSED:
+{chr(10).join(ml[:30])}
+
+BROAD: {chr(10).join(bl[:8])}
+PRECISE: {chr(10).join(pl[:16])}
+
+Return JSON: {{"broad": {{...}}, "precise": {{...}}}}"""
+
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key or os.environ["ANTHROPIC_API_KEY"])
+        resp = client.messages.create(model=model, max_tokens=4096, temperature=0.0,
+                                       messages=[{"role": "user", "content": fix_prompt}])
+        text = resp.content[0].text.strip()
+        if text.startswith("```"): text = "\n".join(text.split("\n")[1:-1])
+        fixes = json.loads(text)
+        for k, v in fixes.get("broad", {}).items():
+            if k in r1b: r1b[k] = list(set(r1b[k]) | set(v))[:10]
+            else: r1b[k] = v[:8]
+        for k, v in fixes.get("precise", {}).items():
+            if k in r1p: r1p[k] = list(set(r1p[k]) | set(v))[:10]
+            else: r1p[k] = v[:8]
+        return {"broad": r1b, "precise": r1p, "round1_hit": round(total/max(len(skills), 1), 3), "source": "llm-two-round"}
+    except Exception as e:
+        return {"broad": r1b, "precise": r1p, "round1_hit": round(total/max(len(skills), 1), 3), "r2_error": str(e), "source": "llm-r1-fallback"}
+
+
 # ── CLI entry ──
 
 def cmd_auto_build():
