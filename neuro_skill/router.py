@@ -96,15 +96,16 @@ class SkillRouter:
             if self._personalize is not None and self._personalize._trained:
                 p_boost = self._personalize.personalize(query)
                 if p_boost is not None and len(p_boost) == len(scores):
-                    # Insert boost as 4th RRF signal:
-                    # create a rank array where boosted skills get lower rank
                     rank_orig = np.zeros(len(scores))
                     order = np.argsort(-scores)
                     for r, idx in enumerate(order):
                         rank_orig[idx] = float(r)
-                    # Adjusted rank: original rank * (1 - 0.3 * boost)
-                    adj_rank = rank_orig * (1.0 - 0.3 * (p_boost - 0.5))
-                    # Convert back to pseudo-scores (lower rank = higher score)
+                    # Dynamic multiplier: weak TS signal keeps original ranking
+                    boost_range = float(p_boost.max() - p_boost.min())
+                    multiplier = 0.15 + 0.85 * boost_range
+                    adj_rank = rank_orig * np.maximum(
+                        0.01, 1.0 - multiplier * (p_boost - 0.5)
+                    )
                     scores = 1.0 / (60.0 + adj_rank)
 
         order = scores.argsort()[::-1][:top_k]
@@ -115,10 +116,10 @@ class SkillRouter:
         p = self._get_personalize()
         p.observe(query, selected_skill)
 
-    def train_personalize(self):
-        """Factorize the implicit feedback matrix. Call after accumulating observations."""
+    def train_personalize(self, method: str = "thompson"):
+        """Build the personalization model. Thompson Sampling (default) or ALS."""
         p = self._get_personalize()
-        p.train([s["name"] for s in self._skills])
+        p.train([s["name"] for s in self._skills], method=method)
 
     def personalize_stats(self) -> dict:
         """Get personalization statistics."""

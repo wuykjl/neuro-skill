@@ -52,6 +52,7 @@ class Personalizer:
         self._query_ids: list[str] = []
         self._model: Optional[object] = None
         self._item_factors: Optional[np.ndarray] = None
+        self._thompson_beta: dict = {}
         self._trained = False
         self._loaded = False
 
@@ -74,7 +75,14 @@ class Personalizer:
         tmp.replace(self._path)
 
     def observe(self, query: str, skill_name: str, weight: int = 1):
-        """Record a skill selection event."""
+        """Record a skill selection event. Updates Thompson priors live.
+
+        Thompson Sampling with Beta(alpha, beta) prior:
+          - Picked skill: alpha += weight (success evidence)
+          - All skills start at uninformed Beta(1, 1)
+          - Competitive Beta penalty: other skills get small beta increase
+            (they were visible but not picked)
+        """
         self._load()
         qk = query_key(query)
         if qk not in self._observations:
@@ -83,18 +91,41 @@ class Personalizer:
             self._observations[qk].get(skill_name, 0) + weight
         )
 
+        # Live Thompson update
+        if hasattr(self, '_thompson_beta'):
+            if qk not in self._thompson_beta:
+                self._thompson_beta[qk] = {}
+            alpha_old, beta_old = self._thompson_beta[qk].get(
+                skill_name, (1.0, 1.0)
+            )
+            # Picked skill: boost alpha by weight (success)
+            self._thompson_beta[qk][skill_name] = (
+                alpha_old + weight, beta_old
+            )
+            # Competitors: small beta increase (visible but not picked)
+            for sn in list(self._thompson_beta[qk].keys()):
+                if sn != skill_name:
+                    a, b = self._thompson_beta[qk][sn]
+                    self._thompson_beta[qk][sn] = (a, b + weight * 0.2)
+
     # ── Train ────────────────────────────
 
-    def train(self, skill_names: list[str]):
-        """Factorize query->skill implicit matrix with ALS.
+    def train(self, skill_names: list[str], method: str = "thompson"):
+        """Train the model. ALS factorizes a confidence matrix; Thompson
+        Sampling (default) learns Beta distributions from every observation.
 
         skill_names: ordered list of all possible skills (index mapping).
+        method: "thompson" (default) or "als".
         """
         self._skill_names = list(skill_names)
         self._load()
 
         if not self._observations:
             self._trained = False
+            return
+
+        if method == "thompson":
+            self._trained = self._train_thompson(skill_names)
             return
 
         n_skills = len(skill_names)
@@ -146,19 +177,85 @@ class Personalizer:
         self._M = M  # (n_queries, n_skills) — raw confidence matrix
         self._trained = True
 
+    # ── Thompson Sampling (default, learned from every observation) ──
+
+    def _train_thompson(self, skill_names: list[str]) -> bool:
+        """Minimal Beta(alpha, beta) priors from observation counts.
+
+        alpha = 1 + count(picked)  — success evidence (starts at 1)
+        beta  = 1                   — uninformed prior
+
+        After just 1 observation, expected = (1+1)/(1+1+1) = 2/3 = 0.67.
+        An unobserved skill gets alpha=1, beta=1 → expected 0.50.
+
+        This lets Thompson produce differentiated signals from the
+        very first data point — no warm-up period needed.
+        """
+        self._thompson_beta: dict[str, dict[str, tuple[float, float]]] = {}
+        self._trained = True
+
+        if not self._observations:
+            return True
+
+        for qk, skill_counts in self._observations.items():
+            self._thompson_beta[qk] = {}
+            for sn, count in skill_counts.items():
+                self._thompson_beta[qk][sn] = (1.0 + float(count), 1.0)
+
+        return True
+
     # ── Personalize ──────────────────────
 
     def personalize(self, query: str) -> np.ndarray:
         """Produce a per-skill boost vector of length n_skills.
 
-        ALS path:   user_embedding @ item_factors.T → (n_skills,) → normalize
-        Cooc path:  find weighted column of M → normalize
+        Thompson path: sample Beta(a,b) for each skill, rank by score.
+        ALS path:      user_embedding @ item_factors.T → normalize
+        Cooc path:     weighted column of M → normalize
         """
         n = len(self._skill_names)
         if not self._trained or n == 0:
             return np.ones(n) * 0.5
 
         qk = query_key(query)
+
+        # ── Thompson Sampling path (primary, no external dependency) ──
+        if hasattr(self, '_thompson_beta') and self._thompson_beta:
+            # Find the closest matching query hash (exact or partial)
+            beta_entry = self._thompson_beta.get(qk)
+            if beta_entry is None:
+                # Aggregate across all observations weighted by query similarity
+                boost = np.ones(n) * 0.5
+                skill_idx = {name: i for i, name in enumerate(self._skill_names)}
+                total_weight = 0.0
+                for obs_qk, obs_skills in self._thompson_beta.items():
+                    # Simple overlap: shared tokens between queries
+                    obs_tokens = set(obs_qk.split())
+                    q_tokens = set(qk.split())
+                    overlap = len(obs_tokens & q_tokens) / max(len(obs_tokens | q_tokens), 1)
+                    if overlap < 0.1:
+                        continue
+                    w = overlap
+                    total_weight += w
+                    for sn, (alpha, beta) in obs_skills.items():
+                        if sn in skill_idx:
+                            # Thompson sample: draw from Beta(alpha, beta)
+                            sample = np.random.beta(alpha, beta)
+                            boost[skill_idx[sn]] += w * sample
+                if total_weight > 0:
+                    boost = boost / total_weight
+                    boost = np.clip(boost, 0.3, 1.0)
+                return boost
+
+            # Exact query hash match: sample Beta for each observed skill
+            skill_idx = {name: i for i, name in enumerate(self._skill_names)}
+            boost = np.ones(n) * 0.3  # neutral baseline
+            for sn, (alpha, beta) in beta_entry.items():
+                if sn in skill_idx:
+                    # Thompson sample from Beta(alpha, beta)
+                    boost[skill_idx[sn]] = np.random.beta(alpha, beta)
+            # Clamp to reasonable range
+            return np.clip(boost, 0.3, 1.0)
 
         # ── ALS path ──
         if self._model is not None:
@@ -215,4 +312,5 @@ class Personalizer:
         self._model = None
         self._item_factors = None
         self._trained = False
+        self._thompson_beta = {}
         self._save()
