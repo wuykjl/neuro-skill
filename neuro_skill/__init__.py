@@ -1,20 +1,24 @@
 """
 neuro-skill — Zero-cost hybrid skill router for AI agents.
 
-Graph spreading activation + cosine similarity + keyword fusion.
-Pure local, 40ms/query, no API calls.
+Two ways to use:
 
-Usage:
-    from neuro_skill import SkillRouter
+  # Explicit (you control lifecycle):
+      from neuro_skill import SkillRouter
+      router = SkillRouter()
+      router.build(["./skills/", "./agents/"])
+      router.query("python security review", top_k=5)
 
-    router = SkillRouter()
-    router.build(["~/.claude/skills/", "~/.claude/agents/"])
-    results = router.query("check Python code for SQL injection", top_k=5)
-    for name, score in results:
-        print(f"  {name}: {score:.3f}")
+  # Auto-start (first call builds, stays hot):
+      from neuro_skill import query
+      query("Go build error", top_k=3)
+      # No build(), no server commands. Just import and call.
 """
 
 from neuro_skill.router import SkillRouter
 
-__version__ = "0.2.0"
-__all__ = ["SkillRouter"]
+# Lazy auto-start query — first call ~500ms, then 5ms
+from neuro_skill.autostart import query
+
+__version__ = "0.3.0"
+__all__ = ["SkillRouter", "query"]
