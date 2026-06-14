@@ -12,8 +12,10 @@ Usage examples in neuro_skill/__init__.py:
     results = query("Go build error")
 """
 
-import os, json, time, atexit, subprocess, threading
+import os, json, time, atexit, subprocess, threading, logging
 from pathlib import Path
+
+logger = logging.getLogger("neuro_skill.autostart")
 
 
 # ── Mode 1: Lazy Singleton (first query builds, lives until process exits) ──
@@ -91,8 +93,8 @@ httpd.serve_forever()
     # Wait for READY signal
     try:
         proc.stdout.readline(timeout=10)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Background server startup timed out: %s", e)
 
     _BG_PID_FILE.write_text(str(proc.pid))
     atexit.register(lambda: stop_background())
@@ -107,8 +109,8 @@ def stop_background():
             pid = int(_BG_PID_FILE.read_text().strip())
             import signal
             os.kill(pid, signal.SIGTERM)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to stop background server: %s", e)
         _BG_PID_FILE.unlink(missing_ok=True)
 
 

@@ -259,7 +259,8 @@ def _handle_predict(args: dict) -> dict:
                 name = item.get("name", "") if isinstance(item, dict) else str(item)
                 cg_keywords.update(re.findall(r'[a-z]{3,}', name.lower()))
     except Exception:
-        pass  # CodeGraph not available is fine
+        import logging
+        logging.getLogger("neuro_skill.mcp").debug("CodeGraph extraction not available")
 
     all_kw = sorted(keywords | cg_keywords)[:30]
     if not all_kw:

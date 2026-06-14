@@ -103,7 +103,8 @@ def watch(directories: list[str], router: "SkillRouter", debounce_s: float = 2.0
             dirs = [str(Path(d).expanduser().resolve()) for d in directories]
             router.build(dirs)
         except Exception as e:
-            pass  # Silently ignore — next query will surface the issue
+            import logging
+            logging.getLogger("neuro_skill.watcher").warning("Rebuild failed: %s", e)
 
     debouncer = _Debouncer(rebuild, delay=debounce_s)
 
@@ -144,8 +145,9 @@ try:
         def rebuild():
             try:
                 router.build(dirs)
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger("neuro_skill.watcher").warning("Watch rebuild failed: %s", e)
 
         debouncer = _Debouncer(rebuild, delay=debounce_s)
         handler = _WatchdogHandler(lambda: debouncer.trigger())

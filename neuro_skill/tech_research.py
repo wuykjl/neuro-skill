@@ -205,8 +205,9 @@ def retrieve_research(
                 content = f.read_text(encoding="utf-8", errors="ignore")
                 if _match_query(query, content[:2000]):
                     results.append(_read_note(f, "content_match"))
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger("neuro_skill.tech").debug("File read error: %s", e)
 
     # Also search general notes for technology references
     for f in OBSIDIAN_ROOT.rglob("*.md"):
@@ -219,8 +220,9 @@ def retrieve_research(
                 if "github" in content.lower() or "stars" in content.lower() or \
                    "技术" in content or "开源" in content or "agent" in content.lower():
                     results.append(_read_note(f, "general_note"))
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger("neuro_skill.tech").debug("File read error: %s", e)
         if len(results) >= max_results:
             break
 

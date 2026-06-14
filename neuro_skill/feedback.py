@@ -98,6 +98,13 @@ class ErrorBook:
 
         self._save()
 
+    def _decayed_boosts(self, entry: dict, now: float, decay_days: float = 7.0) -> dict[str, float]:
+        """Compute per-skill time-decayed boosts from one entry."""
+        entry_ts = entry.get("_ts", now)
+        age_days = (now - entry_ts) / 86400.0
+        decay = 0.5 ** (age_days / max(decay_days, 0.1))
+        return {k: v * decay for k, v in entry.items() if k != "_ts"}
+
     def adjust(
         self,
         query: str,
@@ -124,17 +131,7 @@ class ErrorBook:
         if qhash not in self._entries:
             return scores
 
-        entry = self._entries[qhash]
-        now = time.time()
-
-        # Compute decay and boosted entry values
-        entry_ts = entry.get("_ts", now)
-        age_days = (now - entry_ts) / 86400.0
-        decay = 0.5 ** (age_days / max(decay_days, 0.1))
-        boost_map = {
-            k: v * decay for k, v in entry.items() if k != "_ts"
-        }
-
+        boost_map = self._decayed_boosts(self._entries[qhash], time.time(), decay_days)
         if not boost_map:
             return scores
 
@@ -144,18 +141,13 @@ class ErrorBook:
 
         for i, name in enumerate(skill_names):
             if name in boost_map:
-                # RRF scores are ~0.02-0.05 range.
-                # A boost of 1.0 means adding 0.01-0.015 (~2-3 rank positions).
                 adjusted[i] += boost_map[name] * 0.012
 
         return adjusted.tolist()
 
     def _compute_boost(self, entry: dict, now: float, decay_days: float = 7.0) -> float:
-        """Compute the effective boost of one entry after time decay."""
-        entry_ts = entry.get("_ts", now)
-        age_days = (now - entry_ts) / 86400.0
-        decay = 0.5 ** (age_days / max(decay_days, 0.1))
-        return sum(v * decay for k, v in entry.items() if k != "_ts")
+        """Compute total effective boost of one entry after time decay."""
+        return sum(self._decayed_boosts(entry, now, decay_days).values())
 
     def _prune(self, max_days: int = 30):
         """Remove entries older than max_days."""
