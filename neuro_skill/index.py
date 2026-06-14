@@ -271,7 +271,7 @@ class SkillIndex:
             "n_broad": len(self.meta["broad"]),
             "n_precise": len(self.meta["all_precise"]),
             "graph_density": float(
-                np.count_nonzero(self.G > 0.01) / self.G.size
+                np.count_nonzero(self.G > 0.01) / max(self.G.size, 1)
             ),
             "rank": len(self.cp_weights),
             "build_time_s": round(elapsed, 3),
