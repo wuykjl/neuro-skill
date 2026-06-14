@@ -92,6 +92,28 @@ TOOLS = [
             "required": [],
         },
     },
+    {
+        "name": "neuroskill_predict",
+        "description": (
+            "Predict which skills are relevant for a given source file. "
+            "Extracts imports, decorators, and class/function names from the file, "
+            "then returns pre-loaded skills that match. "
+            "Use this at session start to warm up the skill router with "
+            "context-relevant skills before the user even asks a question. "
+            "Input: absolute path to a source file. "
+            "Output: skills matching the code context detected in the file."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Absolute path to the source file to analyze",
+                },
+            },
+            "required": ["file_path"],
+        },
+    },
 ]
 
 
@@ -190,10 +212,77 @@ def _handle_status(_args: dict) -> dict:
     }
 
 
+def _handle_predict(args: dict) -> dict:
+    """Predict relevant skills from a source file's code context."""
+    file_path = args["file_path"]
+    path = Path(file_path).expanduser().resolve()
+
+    if not path.exists():
+        return {"error": f"File not found: {file_path}", "skills": []}
+    if path.suffix not in (".py", ".ts", ".js", ".go", ".rs", ".java", ".kt", ".swift", ".cpp", ".c", ".rb", ".php"):
+        return {"file": str(path), "skills": [], "hint": f"File type '{path.suffix}' not supported for AST analysis. Currently supports: py, ts, js, go, rs, java, kt, swift, cpp, c, rb, php."}
+
+    # Extract code features from file content
+    import re
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    keywords = set()
+
+    # Imports
+    for m in re.finditer(r'(?:import|from)\s+(\w+)', text):
+        kw = m.group(1).lower()
+        if len(kw) >= 2: keywords.add(kw)
+    # Decorators/annotations
+    for m in re.finditer(r'@(\w+)', text):
+        keywords.add(m.group(1).lower())
+    # Class names
+    for m in re.finditer(r'class\s+(\w+)', text):
+        parts = re.findall(r'[A-Z][a-z]+', m.group(1))
+        keywords.update(p.lower() for p in parts)
+    # Function names (public)
+    for m in re.finditer(r'def\s+(\w+)', text):
+        name = m.group(1)
+        if not name.startswith("_"):
+            keywords.update(re.findall(r'[a-z]{3,}', name.lower()))
+
+    # Also try CodeGraph if available
+    cg_keywords = set()
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["codegraph", "query", "--kind", "import,class,function", "--json"],
+            cwd=str(path.parent),
+            capture_output=True, text=True, timeout=8,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            cg_data = json.loads(result.stdout)
+            for item in (cg_data if isinstance(cg_data, list) else cg_data.get("results", [])):
+                name = item.get("name", "") if isinstance(item, dict) else str(item)
+                cg_keywords.update(re.findall(r'[a-z]{3,}', name.lower()))
+    except Exception:
+        pass  # CodeGraph not available is fine
+
+    all_kw = sorted(keywords | cg_keywords)[:30]
+    if not all_kw:
+        return {"file": str(path), "skills": [], "keywords": [], "hint": "No code features detected."}
+
+    # Route: build a pseudo-query from keywords and find matching skills
+    router = _get_router()
+    pseudo_query = " ".join(all_kw)
+    results = router.query(pseudo_query, top_k=8, method="hybrid")
+
+    return {
+        "file": str(path),
+        "keywords": all_kw,
+        "skills": [{"name": name, "score": round(score, 4)} for name, score in results],
+        "hint": "Pre-load these skills for this file's context",
+    }
+
+
 TOOL_HANDLERS = {
     "neuroskill_query": _handle_query,
     "neuroskill_compare": _handle_compare,
     "neuroskill_status": _handle_status,
+    "neuroskill_predict": _handle_predict,
 }
 
 
