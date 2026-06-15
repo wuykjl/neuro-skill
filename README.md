@@ -157,7 +157,7 @@ neuro-skill diagnose -d ./skills/ ./agents/  # find miss cases
 | **Claude Code** | `neuro-skill install claude` | MCP (4 tools: query, compare, status, predict) |
 | **Cursor** | `neuro-skill install cursor` | MCP |
 | **Codex CLI** | `neuro-skill install codex` | MCP |
-| **Hermes** | Third-party validated (332 skills) | Adapter script |
+| **Hermes** | `neuro-skill hermes install` | pre_llm_call plugin (LLM sees top-3 only) |
 | **Windsurf** | Edit `.windsurf/mcp.json` | MCP |
 | **Continue** | Edit `~/.continue/mcp.json` | MCP |
 | **GitHub Copilot** | `curl localhost:8765/query` | HTTP |
@@ -165,6 +165,31 @@ neuro-skill diagnose -d ./skills/ ./agents/  # find miss cases
 | **Any Python script** | `from neuro_skill import query` | Python API |
 | **Any shell / CI** | `neuro-skill query "..."` | CLI |
 | **OpenCode / Kiro / Aider** | Edit their MCP config | MCP |
+
+### Hermes Integration (Host-Level Routing)
+
+Hermes is different from all other agents: its `pre_llm_call` hook enables **host-level routing** — the router runs *before* the LLM ever sees a query. This solves the "AI doesn't know it needs routing" deadlock that plagues MCP-based integrations.
+
+```
+MCP approach (Claude Code, Cursor, Codex):
+  AI sees 332 skills + neuroskill_query tool
+  → AI must DECIDE to call the router
+  → 56% of the time, it doesn't (Vercel, Jan 2026)
+
+Hermes pre_llm_call approach:
+  User query arrives
+  → pre_llm_call hook → router.query(msg, top_k=3)
+  → LLM sees: [Top 3 skills for this query]
+  → LLM never sees the other 329 skills
+```
+
+```bash
+neuro-skill hermes install    # one command
+# → deploys to HERMES_HOME/plugins/neuro-skill-router/
+# → auto-discovered on Hermes restart
+```
+
+Architecture verified by independent tester (Hermes v0.16.0, Windows Desktop, DeepSeek V4 Flash, 332 skills). Latency: 6-10ms per query, 2.3s one-time startup.
 
 ## Feature System
 
