@@ -47,9 +47,14 @@ BROAD = {
     "desktop": [
         "electron", "tkinter", "desktop", "gui", "windows",
         "桌面", "窗口",
-        # File search tools
-        "file search", "everything", "es.exe", "全盘搜索", "文件搜索",
-        "检索文件", "find files", "locate", "全盘",
+        # File search tools — use specific trademarks, not generic words
+        "everything", "es.exe", "全盘",
+    ],
+    "document": [
+        "document", "markdown", "readme", "docx", "pptx",
+        "文件处理", "文档", "模板", "import",
+        # Chinese file operations
+        "检索", "搜索文件", "查找文件", "locate", "find files",
     ],
     "data": [
         "data", "analytics", "pipeline", "etl", "数据", "分析", "处理",

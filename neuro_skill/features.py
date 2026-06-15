@@ -18,10 +18,31 @@ PRECISE = dict(_BASE_PRECISE)
 # ── Shared tokenizer (used by both _match and routers.keyword) ──
 
 def tokenize(text: str) -> set[str]:
-    """Split text into tokens: English words >= 2 chars + Chinese bigrams."""
+    """Split into tokens: ASCII words + Chinese bigrams + lang keywords.
+
+    Handles mixed-script queries like "检索cs文件安全检查".
+    Built-in regex cache avoids repeated compilation.
+    """
+    text_lower = text.lower()
     tokens = set()
-    tokens.update(re.findall(r"\w{2,}", text.lower()))
-    tokens.update(re.findall(r"[一-鿿]{2,6}", text.lower()))
+
+    # ASCII-only word match (avoids Unicode \w matching CJK as word chars)
+    tokens.update(re.findall(r"[a-z0-9]{2,}", text_lower))
+
+    # Single-letter language keywords caught separately:
+    # c#, f#, go, rs, ts, js — trapped as standalone letter pairs
+    for m in re.finditer(r"(?:^|(?<=[^a-z]))[a-z]{1,3}(?:#[a-z]+)?(?:(?=[^a-z])|$)", text_lower):
+        tokens.add(m.group())
+
+    # Chinese: overlapping bigrams from pure-CJK spans
+    for m in re.finditer(r"[一-鿿]{2,}", text_lower):
+        span = m.group()
+        for i in range(len(span) - 1):
+            tokens.add(span[i:i + 2])
+
+    # Whole Chinese word spans (non-overlapping, for feature matching)
+    tokens.update(re.findall(r"[一-鿿]{2,6}", text_lower))
+
     return tokens
 
 
@@ -55,10 +76,15 @@ def _compile_regex(pattern: str) -> re.Pattern | None:
 
 _CHINESE_PATTERN = re.compile(r'[一-鿿]')
 _EN_MIXED_PATTERNS: dict[str, re.Pattern] = {}
-for kw_base in ["go", "c++", "c#"]:
+for kw_base, feat_name in [
+    ("go", "go"), ("c++", "cpp"), ("c#", "csharp"),
+    ("cs", "csharp"), ("ts", "javascript_ts"), ("js", "javascript_ts"),
+    ("rs", "rust"), ("kt", "kotlin"), ("rb", "ruby"),
+]:
     try:
-        _EN_MIXED_PATTERNS[kw_base] = re.compile(
-            r'(?<![a-z])' + re.escape(kw_base) + r'[一-鿿]', re.I
+        _EN_MIXED_PATTERNS[kw_base] = (
+            re.compile(r'(?<![a-z])' + re.escape(kw_base) + r'[一-鿿文件]', re.I),
+            feat_name,
         )
     except re.error:
         pass
@@ -75,12 +101,11 @@ def _match(text: str, keyword_map: dict[str, list[str]]) -> set[str]:
     text_lower = text.lower()
     matched = set()
 
-    # 中英混合扩展: 如果文本包含中文字符,对短英文名做拼接匹配
+    # 中英混合扩展: "cs文件" → csharp, "go构建" → go, etc.
     if _CHINESE_PATTERN.search(text_lower):
-        kw_map = {"go": "go", "c++": "cpp", "c#": "csharp"}
-        for kw_base, pattern in _EN_MIXED_PATTERNS.items():
+        for kw_base, (pattern, feat_name) in _EN_MIXED_PATTERNS.items():
             if pattern.search(text_lower):
-                matched.add(kw_map.get(kw_base, kw_base))
+                matched.add(feat_name)
 
     for category, keywords in keyword_map.items():
         for kw in keywords:
