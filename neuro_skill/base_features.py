@@ -47,6 +47,9 @@ BROAD = {
     "desktop": [
         "electron", "tkinter", "desktop", "gui", "windows",
         "桌面", "窗口",
+        # File search tools
+        "file search", "everything", "es.exe", "全盘搜索", "文件搜索",
+        "检索文件", "find files", "locate", "全盘",
     ],
     "data": [
         "data", "analytics", "pipeline", "etl", "数据", "分析", "处理",

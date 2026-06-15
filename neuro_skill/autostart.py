@@ -37,9 +37,9 @@ class _LazyRouter:
                     self._router = SkillRouter()
                     self._router.build(self._dirs)
 
-    def query(self, text, top_k=5, method="hybrid"):
+    def query(self, text, top_k=5, method="hybrid", return_body=False):
         self._ensure_built()
-        return self._router.query(text, top_k=top_k, method=method)
+        return self._router.query(text, top_k=top_k, method=method, return_body=return_body)
 
     @property
     def built(self):
@@ -151,6 +151,9 @@ def _get_lazy():
 
 
 # Public API
-def query(text, top_k=5, method="hybrid"):
-    """Auto-starting lazy query. First call builds index (~500ms), then 5ms."""
-    return _get_lazy().query(text, top_k=top_k, method=method)
+def query(text, top_k=5, method="hybrid", return_body=False):
+    """Auto-starting lazy query. First call builds index (~500ms), then 5ms.
+
+    Set return_body=True to get full skill body as 3rd element.
+    """
+    return _get_lazy().query(text, top_k=top_k, method=method, return_body=return_body)

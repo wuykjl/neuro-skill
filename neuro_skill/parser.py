@@ -95,6 +95,7 @@ def parse_skill_file(filepath: Path) -> Optional[dict]:
         "description": description,
         "search_text": search_text.lower(),
         "source": "agent" if "agents" in str(filepath) else "skill",
+        "_body": body,  # full body text — used by query(return_body=True)
     }
 
 

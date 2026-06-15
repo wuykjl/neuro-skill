@@ -354,23 +354,30 @@ def hybrid(skills: list[dict], query: str,
         for rank, idx in enumerate(order):
             rank_arr[idx] = float(rank)
 
-    # Filter out methods that returned all zeros (no signal)
-    signals = [rank_bm25, rank_cos, rank_graph]
+    # ── Compute RRF with signal-specific weights ──
+    rrf = np.zeros(N, dtype=np.float64)
+    active = 0.0
 
-    # 5th signal: LLM semantic rerank (optional, API-required)
+    # Detect keyword-dominant skills (rare-category) for fairness boost.
+    # A skill ranked top-5 by BM25 but poorly by graph (few/no neighbors)
+    # gets a correction so unique specialties aren't drowned out by
+    # consensus signals. Weight: BM25 ×2, cosine ×1, graph ×0.5.
+    weights = {"bm25": 2.0, "cosine": 1.0, "graph": 0.5}
+
+    for label, rank_arr in [("bm25", rank_bm25), ("cosine", rank_cos), ("graph", rank_graph)]:
+        if rank_arr.max() > rank_arr.min() or not np.allclose(rank_arr, 0):
+            w = weights.get(label, 1.0)
+            rrf += w / (K + rank_arr)
+            active += w
+
+    # 5th signal: LLM rerank
     if kw.get("enable_llm"):
         rank_llm = llm_rerank(query, skills, top_n=min(10, N),
                               model=kw.get("llm_model", "claude-haiku-4-5-20251001"),
                               api_key=kw.get("llm_api_key"))
         if rank_llm is not None:
-            signals.append(rank_llm)
-
-    active = 0
-    rrf = np.zeros(N, dtype=np.float64)
-    for rank_arr in signals:
-        if rank_arr.max() > rank_arr.min() or not np.allclose(rank_arr, 0):
-            rrf += 1.0 / (K + rank_arr)
-            active += 1
+            rrf += 1.0 / (K + rank_llm)
+            active += 1.0
 
     # If no signal at all, return uniform
     if active == 0:

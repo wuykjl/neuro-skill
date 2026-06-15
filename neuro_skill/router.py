@@ -66,12 +66,14 @@ class SkillRouter:
         top_k: int = 10,
         method: str = "hybrid",
         enable_feedback: bool = True,
+        return_body: bool = False,
         **kwargs,
-    ) -> list[tuple[str, float]]:
+    ) -> list[tuple]:
         """Return top-k matching skills for a user query.
 
         Methods: hybrid, cosine, graph_spread, jaccard, keyword, tfidf
         enable_feedback: apply Error Book corrections (default True)
+        return_body: include full SKILL.md body as 3rd element (default False)
         """
         if not self._built:
             raise RuntimeError("Index not built. Call .build() first.")
@@ -112,6 +114,12 @@ class SkillRouter:
                     scores = 1.0 / (60.0 + adj_rank)
 
         order = scores.argsort()[::-1][:top_k]
+        if return_body:
+            return [
+                (self._skills[i]["name"], float(scores[i]),
+                 self._skills[i].get("_body"))
+                for i in order
+            ]
         return [(self._skills[i]["name"], float(scores[i])) for i in order]
 
     def observe(self, query: str, selected_skill: str):
