@@ -354,7 +354,17 @@ def hybrid(skills: list[dict], query: str,
         for rank, idx in enumerate(order):
             rank_arr[idx] = float(rank)
 
-    # ── Compute RRF with signal-specific weights ──
+    # ── Sparse coverage gate ──
+    # If BM25 hits <20% of skills AND cosine #1-#2 gap is <2%, the
+    # router has no real opinion. Return an empty array (special value)
+    # to signal "let AI use its own tools."
+    bm25_cov = float((s_bm25 > 0).sum()) / max(N, 1)
+    if bm25_cov < 0.20 and N >= 2:
+        cos_order = np.argsort(-s_cos)
+        cos_gap = float(s_cos[cos_order[0]] - s_cos[cos_order[1]])
+        if cos_gap < 0.02:
+            return np.array([])  # Empty = no clear winner
+
     rrf = np.zeros(N, dtype=np.float64)
     active = 0.0
 

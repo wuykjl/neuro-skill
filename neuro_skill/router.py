@@ -162,7 +162,12 @@ class SkillRouter:
                     )
                     scores = 1.0 / (60.0 + adj_rank)
 
-        order = scores.argsort()[::-1][:top_k]
+        order = scores.argsort()[::-1][:top_k] if len(scores) > 0 else np.array([], dtype=int)
+
+        # ── Quality gate: hybrid() returned empty → no clear signal ──
+        if len(order) == 0:
+            return []
+
         if return_body:
             return [
                 (self._skills[i]["name"], float(scores[i]),
