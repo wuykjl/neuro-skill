@@ -25,14 +25,31 @@ _skill_dirs = None
 
 def _get_skill_dirs():
     home = Path.home()
+    local = os.environ.get("LOCALAPPDATA", "") if os.name == "nt" else ""
+    hermes_home = os.environ.get("HERMES_HOME", "")
+
     dirs = [
+        # Claude Code paths
         str(home / ".claude" / ".skills-store" / "skills"),
         str(home / ".claude" / ".skills-store" / "agents"),
         str(home / ".claude" / "skills"),
         str(home / ".claude" / "agents"),
         str(home / ".claude" / ".agents" / "skills"),
+        # Hermes paths
+        str(home / ".hermes" / "skills"),
+        str(home / ".hermes" / "agents"),
+        str(home / ".hermes" / "skills-store"),
+        str(home / ".config" / "hermes" / "skills"),
+        str(Path(os.path.join(local, "hermes", "skills")) if local else ""),
+        str(Path(os.path.join(local, "hermes-agent", "skills")) if local else ""),
     ]
-    return [d for d in dirs if Path(d).is_dir()]
+    if hermes_home:
+        dirs.extend([
+            str(Path(hermes_home) / "skills"),
+            str(Path(hermes_home) / "agents"),
+        ])
+
+    return sorted(set(d for d in dirs if Path(d).is_dir()))
 
 
 def on_session_start(**kwargs):

@@ -610,11 +610,19 @@ def on_session_start(**kw):
         if _router: return
         from neuro_skill import SkillRouter
         from pathlib import Path
+        import os
         home = Path.home()
+        local = os.environ.get('LOCALAPPDATA','')
+        hermes_home = os.environ.get('HERMES_HOME','')
         dirs = [str(d) for d in [
             home/'.claude/.skills-store/skills', home/'.claude/.skills-store/agents',
-            home/'.claude/skills', home/'.claude/agents', home/'.claude/.agents/skills'
+            home/'.claude/skills', home/'.claude/agents', home/'.claude/.agents/skills',
+            home/'.hermes/skills', home/'.hermes/agents',
+            Path(local)/'hermes'/'skills', Path(local)/'hermes-agent'/'skills',
         ] if d.is_dir()]
+        if hermes_home:
+            dirs.extend([str(Path(hermes_home)/'skills'), str(Path(hermes_home)/'agents')])
+        dirs = sorted(set(dirs))
         r = SkillRouter(); r.build(dirs); _router = r
 
 def pre_llm_call(**kw):
