@@ -30,7 +30,7 @@ When your agent has 150+ skills, the LLM scans every skill description on every 
       go-reviewer: 0.956]
 ```
 
-Up to 5 signals fused via Reciprocal Rank Fusion (RRF): BM25 keyword, feature cosine similarity, graph spreading activation, collaborative filtering personalization, and optional LLM semantic rerank. No embedding API required. No GPU. Fully offline. Haiku rerank available as opt-in 5th signal (~$0.0003/call).
+Up to 5 signals fused via **weighted** Reciprocal Rank Fusion (RRF): BM25 keyword (×2), feature cosine similarity (×1), graph spreading activation (×0.5), collaborative filtering personalization, and optional LLM semantic rerank. Weighting prevents rare-category skills (e.g., file-search tools) from being drowned out by consensus signals. No embedding API required. No GPU. Fully offline. Haiku rerank available as opt-in 5th signal (~$0.0003/call).
 
 ## Quick Start
 
@@ -44,9 +44,16 @@ from neuro_skill import SkillRouter
 router = SkillRouter()
 router.build(["./my-skills/", "./my-agents/"])
 
+# Standard query (returns name + score)
 results = router.query("check Python code for SQL injection", top_k=5)
 for name, score in results:
     print(f"  {name}: {score:.3f}")
+
+# return_body=True: query returns full skill instructions inline
+# No need to read hidden files — AI can act on results directly
+results = router.query("review C# code security", top_k=5, return_body=True)
+for name, score, body in results:
+    print(f"  {name}: {score:.3f}")  # body = full SKILL.md content
 ```
 
 **Your skills need YAML frontmatter** in `.md` files:
@@ -120,11 +127,12 @@ A third-party tester integrated neuro-skill into the Hermes agent framework (332
 
 - **150-300 skills, zero API budget** — the sweet spot
 - **Multi-skill queries** — "send a message AND create a calendar event" activates both
-- **Chinese queries** — 50 bilingual features covering 常见中文触发词 (扫描安全漏洞、发消息、容器部署)
+- **Chinese queries** — 50 bilingual features covering 常见中文触发词 (扫描安全漏洞、发消息、容器部署, 检索文件, 全盘搜索)
 - **Offline / air-gapped** — no network needed
 - **Transparent, debuggable routing** — not a black box
 - **Personalization** — learns from which skills you actually pick
 - **Orchestration** — plan("security + deploy") → ordered multi-skill pipeline
+- **return_body** — query returns full skill body inline. AI reads instructions directly from routing result, zero file I/O
 
 ## What It's Not Good At
 
@@ -177,7 +185,7 @@ Two complete extras examples:
 - Python ≥ 3.10
 - numpy, pyyaml, scikit-learn
 - Zero API, zero GPU, fully offline
-- 54 tests, all green
+- 102 tests, all green
 
 ## Ecosystem
 
