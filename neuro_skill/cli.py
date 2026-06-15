@@ -358,6 +358,41 @@ def cmd_learn(args):
     print(book.stats())
 
 
+def cmd_correct(args):
+    """Auto-resolve ambiguous correction — no need to remember exact skill names.
+
+    The user describes what skill they WANTED, and neuro-skill reverse-routes
+    to find the best match. Then feeds it into Error Book.
+    """
+    from neuro_skill.feedback import ErrorBook
+    router = SkillRouter()
+    dirs = _default_skill_dirs()
+    router.build(dirs)
+
+    # Route the user's description to find the most likely skill
+    results = router.query(args.preferred, top_k=5)
+    best_name, best_score = results[0]
+
+    if best_score < 0.03:
+        print(f"Could not resolve '{args.preferred}' to a specific skill (best match: {best_name}, score={best_score:.3f}).")
+        print("Tip: be more specific — name a programming language, framework, or tool category.")
+        return
+
+    # Show candidates and confirm
+    print(f"Query:    '{args.query}'")
+    print(f"Resolved: '{args.preferred}' → {best_name} (score={best_score:.3f})")
+    if len(results) > 1:
+        others = " | ".join(f"{n} ({s:.3f})" for n, s in results[1:3])
+        print(f"Alternatives: {others}")
+    print()
+
+    # Record the correction
+    book = ErrorBook()
+    book.correct(args.query, best_name)
+    print(f"Corrected: '{args.query}' -> {best_name}")
+    print(f"  Next time, {best_name} will rank higher for similar queries.")
+
+
 def cmd_feedback(args):
     """Show Error Book statistics."""
     from neuro_skill.feedback import ErrorBook
@@ -490,6 +525,18 @@ def cmd_rule(args):
             print(f"Invalid index {args.index}. Use 'neuro-skill rule list' to see indices.")
 
 
+def _default_skill_dirs() -> list[str]:
+    """Default skill directories for commands that need a quick index."""
+    dirs = [
+        str(Path.home() / ".claude" / ".skills-store" / "skills"),
+        str(Path.home() / ".claude" / ".skills-store" / "agents"),
+        str(Path.home() / ".claude" / "skills"),
+        str(Path.home() / ".claude" / "agents"),
+        str(Path.home() / ".claude" / ".agents" / "skills"),
+    ]
+    return [d for d in dirs if Path(d).is_dir()]
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="neuro-skill",
@@ -598,6 +645,11 @@ def main():
     p_learn.add_argument("query", help="The original query text")
     p_learn.add_argument("preferred", help="The skill name the user actually chose")
 
+    # correct — fuzzy resolve + learn
+    p_correct = sub.add_parser("correct", help="Auto-resolve ambiguous correction — describe what you wanted")
+    p_correct.add_argument("query", help="The original query text")
+    p_correct.add_argument("preferred", help='What kind of skill you actually wanted (e.g. "file search tool")')
+
     # feedback
     p_fb = sub.add_parser("feedback", help="Show Error Book statistics")
     p_fb.add_argument("--clear", action="store_true", help="Reset all feedback")
@@ -648,6 +700,8 @@ def main():
         cmd_plan(args)
     elif args.command == "learn":
         cmd_learn(args)
+    elif args.command == "correct":
+        cmd_correct(args)
     elif args.command == "feedback":
         cmd_feedback(args)
     elif args.command == "personalize":
