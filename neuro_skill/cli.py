@@ -445,6 +445,51 @@ def cmd_setup(args):
     print("=" * 50)
 
 
+def cmd_rule(args):
+    """Manage priority rules that override routing."""
+    import json as _json
+    rules_path = Path.home() / ".neuro-skill" / "rules.json"
+
+    if args.rule_command == "add":
+        rules_path.parent.mkdir(parents=True, exist_ok=True)
+        rules = []
+        if rules_path.exists():
+            try:
+                rules = _json.loads(rules_path.read_text(encoding="utf-8"))
+            except _json.JSONDecodeError:
+                pass
+        rules.append({"pattern": args.pattern, "skill": args.skill})
+        rules_path.write_text(_json.dumps(rules, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(f"Rule added: /{args.pattern}/ → {args.skill}")
+
+    elif args.rule_command == "list":
+        rules = []
+        if rules_path.exists():
+            try:
+                rules = _json.loads(rules_path.read_text(encoding="utf-8"))
+            except _json.JSONDecodeError:
+                pass
+        if not rules:
+            print("No rules defined. Add: neuro-skill rule add '<pattern>' '<skill>'")
+            return
+        print(f"Priority rules ({len(rules)}):")
+        for i, r in enumerate(rules):
+            print(f"  [{i}] /{r['pattern']}/ → {r['skill']}")
+
+    elif args.rule_command == "remove":
+        try:
+            rules = _json.loads(rules_path.read_text(encoding="utf-8"))
+        except Exception:
+            print("No rules file found.")
+            return
+        if 0 <= args.index < len(rules):
+            removed = rules.pop(args.index)
+            rules_path.write_text(_json.dumps(rules, indent=2, ensure_ascii=False), encoding="utf-8")
+            print(f"Removed: /{removed['pattern']}/ → {removed['skill']}")
+        else:
+            print(f"Invalid index {args.index}. Use 'neuro-skill rule list' to see indices.")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="neuro-skill",
@@ -569,6 +614,16 @@ def main():
     # setup — one-command install for new users
     p_setup = sub.add_parser("setup", help="One-command setup — build index, inject into CLAUDE.md, print usage")
 
+    # rule — priority rules (bypass routing)
+    p_rule = sub.add_parser("rule", help="Manage priority rules — pattern-matched skills override routing")
+    p_rule_sub = p_rule.add_subparsers(dest="rule_command")
+    p_rule_add = p_rule_sub.add_parser("add", help="Add a priority rule")
+    p_rule_add.add_argument("pattern", help="Regex pattern (e.g. '检索.*cs.*文件')")
+    p_rule_add.add_argument("skill", help="Skill name to assign (e.g. 'csharp-reviewer')")
+    p_rule_list = p_rule_sub.add_parser("list", help="List all priority rules")
+    p_rule_remove = p_rule_sub.add_parser("remove", help="Remove a rule by index")
+    p_rule_remove.add_argument("index", type=int, help="Rule index (from 'neuro-skill rule list')")
+
     args = parser.parse_args()
 
     if args.command == "build":
@@ -599,6 +654,8 @@ def main():
         cmd_personalize(args)
     elif args.command == "setup":
         cmd_setup(args)
+    elif args.command == "rule":
+        cmd_rule(args)
     else:
         parser.print_help()
 

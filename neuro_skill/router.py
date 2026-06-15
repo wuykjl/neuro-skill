@@ -13,6 +13,8 @@ Usage:
 
 from __future__ import annotations
 
+import json
+import re
 import time
 from pathlib import Path
 
@@ -21,6 +23,34 @@ import numpy as np
 from neuro_skill.parser import load_skills
 from neuro_skill.index import SkillIndex
 from neuro_skill.routers import ROUTERS as _ALL_ROUTERS
+
+
+_RULES_PATH = Path.home() / ".neuro-skill" / "rules.json"
+
+
+def _load_rules() -> list[dict]:
+    """Load priority rules. Format: [{\"pattern\": \"检索.*cs\", \"skill\": \"csharp-reviewer\"}]"""
+    try:
+        if _RULES_PATH.exists():
+            return json.loads(_RULES_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return []
+
+
+def _check_rules(query: str, name_idx: dict) -> str | None:
+    """Check if query matches any priority rule. Returns skill name or None."""
+    rules = _load_rules()
+    for rule in rules:
+        pattern = rule.get("pattern", "")
+        skill = rule.get("skill", "")
+        if pattern and skill and skill in name_idx:
+            try:
+                if re.search(pattern, query, re.IGNORECASE):
+                    return skill
+            except re.error:
+                pass
+    return None
 
 
 class SkillRouter:
@@ -67,6 +97,7 @@ class SkillRouter:
         method: str = "hybrid",
         enable_feedback: bool = True,
         return_body: bool = False,
+        enable_rules: bool = True,
         **kwargs,
     ) -> list[tuple]:
         """Return top-k matching skills for a user query.
@@ -74,9 +105,30 @@ class SkillRouter:
         Methods: hybrid, cosine, graph_spread, jaccard, keyword, tfidf
         enable_feedback: apply Error Book corrections (default True)
         return_body: include full SKILL.md body as 3rd element (default False)
+        enable_rules: check ~/.neuro-skill/rules.json first (default True)
         """
         if not self._built:
             raise RuntimeError("Index not built. Call .build() first.")
+
+        # ── Rule-based override (priority > routing) ──
+        if enable_rules:
+            rule_match = _check_rules(query, self._name_idx)
+            if rule_match:
+                ranked = [(rule_match, 1.0)]
+                # Fill remaining slots from router (with return_body if needed)
+                rest = self._query_router(query, top_k - 1, method, enable_feedback)
+                ranked.extend([(n, s) for n, s in rest if n != rule_match][:top_k - 1])
+                if return_body:
+                    return [(n, s, self._skills[self._name_idx[n]].get("_body"))
+                            if n in self._name_idx else (n, s, None)
+                            for n, s in ranked]
+                return ranked
+
+        return self._query_router(query, top_k, method, enable_feedback, return_body, **kwargs)
+
+    def _query_router(self, query: str, top_k: int, method: str,
+                      enable_feedback: bool, return_body: bool = False, **kwargs) -> list[tuple]:
+        """Core routing logic."""
         if method not in _ALL_ROUTERS:
             raise ValueError(
                 f"Unknown method '{method}'. Available: {list(_ALL_ROUTERS)}"
@@ -90,14 +142,12 @@ class SkillRouter:
             **kwargs,
         )
 
-        # Apply Error Book feedback adjustments
         if enable_feedback and method == "hybrid":
             fb = self._get_feedback()
             names = [s["name"] for s in self._skills]
             scores = np.array(fb.adjust(query, scores.tolist(), names),
                               dtype=np.float64)
 
-            # Fourth signal: collaborative filtering personalization
             if self._personalize is not None and self._personalize._trained:
                 p_boost = self._personalize.personalize(query)
                 if p_boost is not None and len(p_boost) == len(scores):
@@ -105,7 +155,6 @@ class SkillRouter:
                     order = np.argsort(-scores)
                     for r, idx in enumerate(order):
                         rank_orig[idx] = float(r)
-                    # Dynamic multiplier: weak TS signal keeps original ranking
                     boost_range = float(p_boost.max() - p_boost.min())
                     multiplier = 0.15 + 0.85 * boost_range
                     adj_rank = rank_orig * np.maximum(
