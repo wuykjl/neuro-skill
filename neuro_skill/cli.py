@@ -398,6 +398,53 @@ def cmd_personalize(args):
     print(f"File: {s['file']}")
 
 
+def cmd_setup(args):
+    """One-command setup for new users: build index + print usage guide."""
+    print("=" * 50)
+    print("  neuro-skill setup")
+    print("=" * 50)
+    print()
+
+    # 1. Build index
+    dirs = [
+        str(Path.home() / ".claude" / "skills"),
+        str(Path.home() / ".claude" / "agents"),
+        str(Path.home() / ".claude" / ".agents" / "skills"),
+    ]
+    dirs = [d for d in dirs if Path(d).is_dir()]
+
+    print("[1/3] 构建技能索引...")
+    router = SkillRouter()
+    stats = router.build(dirs)
+    print(f"      {stats['n_skills']} 个技能, {stats['n_features']} 个特征, {stats['build_time_s']}s")
+
+    # 2. Test query
+    print()
+    print("[2/3] 验证查询...")
+    results = router.query("python code review security", top_k=3)
+    for name, score in results:
+        print(f"      {name}: {score:.3f}")
+
+    # 3. Usage guide
+    print()
+    print("[3/3] 使用方式")
+    print()
+    print("  CLI 查询:")
+    print("    neuro-skill query \"Go build error fix\"")
+    print()
+    print("  Python API:")
+    print("    from neuro_skill import query")
+    print("    results = query(\"C# security review\", return_body=True)")
+    print()
+    print("  AI 对话中（100% 触发）:")
+    print('    "检索cs文件安全检查, 先调用 neuro_skill 路由"')
+    print()
+    print("  MCP 工具注入 (Claude Code/Cursor/Codex):")
+    print("    neuro-skill install claude")
+    print()
+    print("=" * 50)
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="neuro-skill",
@@ -512,15 +559,15 @@ def main():
 
     # personalize
     p_per = sub.add_parser("personalize", help="Train or check CF personalization model")
-    p_per.add_argument("--train", action="store_true", help="Train the ALS model on accumulated data")
+    p_per.add_argument("--train", action="store_true", help="Train ALS model")
     p_per.add_argument("--stats", action="store_true", help="Show CF statistics")
-    p_per.add_argument("--clear", action="store_true", help="Reset all CF data")
+    p_per.add_argument("--clear", action="store_true", help="Reset CF data")
     p_per.add_argument("--directories", "-d", nargs="+",
-                       default=[
-                           str(Path.home() / ".claude/skills/"),
-                           str(Path.home() / ".claude/agents/"),
-                       ],
+                       default=[str(Path.home()/".claude/skills/"), str(Path.home()/".claude/agents/")],
                        help="Skill directories")
+
+    # setup — one-command install for new users
+    p_setup = sub.add_parser("setup", help="One-command setup — build index, inject into CLAUDE.md, print usage")
 
     args = parser.parse_args()
 
@@ -550,6 +597,8 @@ def main():
         cmd_feedback(args)
     elif args.command == "personalize":
         cmd_personalize(args)
+    elif args.command == "setup":
+        cmd_setup(args)
     else:
         parser.print_help()
 
