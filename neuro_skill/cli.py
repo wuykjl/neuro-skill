@@ -537,6 +537,113 @@ def _default_skill_dirs() -> list[str]:
     return [d for d in dirs if Path(d).is_dir()]
 
 
+def cmd_hermes(args):
+    """Install neuro-skill as a Hermes pre_llm_call plugin."""
+    import os
+    import shutil
+    import neuro_skill as ns
+
+    # Find HERMES_HOME
+    hermes_home = os.environ.get("HERMES_HOME", "")
+    if not hermes_home:
+        # Windows default
+        local = os.environ.get("LOCALAPPDATA", "")
+        hermes_home = os.path.join(local, "hermes") if local else ""
+
+    if not hermes_home or not os.path.isdir(hermes_home):
+        print("Cannot find Hermes installation.")
+        print("Set HERMES_HOME, or ensure Hermes is installed at:")
+        print("  Windows: %LOCALAPPDATA%\\hermes")
+        print("  macOS:   ~/Library/Application Support/hermes")
+        print("  Linux:   ~/.local/share/hermes")
+        return
+
+    plugin_dir = os.path.join(hermes_home, "plugins", "neuro-skill-router")
+
+    if args.hermes_command == "install":
+        os.makedirs(plugin_dir, exist_ok=True)
+
+        # Copy plugin files from package
+        pkg_dir = os.path.dirname(ns.__file__)
+        src = os.path.join(pkg_dir, "plugins", "hermes")
+
+        if os.path.isdir(src):
+            for fname in ("plugin.yaml", "__init__.py"):
+                sf = os.path.join(src, fname)
+                df = os.path.join(plugin_dir, fname)
+                if os.path.isfile(sf):
+                    shutil.copy2(sf, df)
+            print(f"Hermes plugin installed -> {plugin_dir}")
+            print()
+            print("Restart Hermes to activate.")
+            print()
+            print("What it does:")
+            print("  - on_session_start: builds neuro-skill index (~2.3s, one-time)")
+            print("  - pre_llm_call:     routes each query, injects top-3 skills")
+            print("  - LLM sees:         3 relevant skills, not 332")
+        else:
+            # Fallback: inline generation
+            _generate_hermes_plugin(plugin_dir)
+    else:
+        print("Usage: neuro-skill hermes install")
+
+
+def _generate_hermes_plugin(plugin_dir: str):
+    """Inline fallback when package files not found."""
+    import os
+    import json as _json
+
+    plugin_yaml = {
+        "name": "neuro-skill-router",
+        "version": "0.8.0",
+        "description": "Route 332+ skills via 5-signal RRF — LLM only sees top-3",
+        "enabled": True,
+    }
+
+    plugin_py = """\"\"\"Hermes pre_llm_call plugin — routes through neuro-skill before LLM sees query.\"\"\"
+import threading
+_router, _lock = None, threading.Lock()
+
+def on_session_start(**kw):
+    global _router
+    with _lock:
+        if _router: return
+        from neuro_skill import SkillRouter
+        from pathlib import Path
+        home = Path.home()
+        dirs = [str(d) for d in [
+            home/'.claude/.skills-store/skills', home/'.claude/.skills-store/agents',
+            home/'.claude/skills', home/'.claude/agents', home/'.claude/.agents/skills'
+        ] if d.is_dir()]
+        r = SkillRouter(); r.build(dirs); _router = r
+
+def pre_llm_call(**kw):
+    global _router
+    q = kw.get('user_message','')
+    if not q or not q.strip(): return {}
+    if not _router:
+        try: on_session_start()
+        except: return {}
+    try:
+        res = _router.query(q, top_k=3, method='hybrid')
+    except: return {}
+    if not res: return {}
+    lines = ['[Top 3 skills for this query]']
+    for n,s in res: lines.append(f'  {n} ({s:.3f})')
+    lines.append('')
+    lines.append('If none match, fall back to built-in tools.')
+    return {'context': chr(10).join(lines)}
+"""
+
+    with open(os.path.join(plugin_dir, "plugin.yaml"), "w", encoding="utf-8") as f:
+        _json.dump(plugin_yaml, f, indent=2)
+    with open(os.path.join(plugin_dir, "__init__.py"), "w", encoding="utf-8") as f:
+        f.write(plugin_py)
+
+    print(f"Hermes plugin installed -> {plugin_dir}")
+    print("Restart Hermes to activate.")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="neuro-skill",
@@ -666,6 +773,11 @@ def main():
     # setup — one-command install for new users
     p_setup = sub.add_parser("setup", help="One-command setup — build index, inject into CLAUDE.md, print usage")
 
+    # hermes — install pre_llm_call plugin
+    p_hermes = sub.add_parser("hermes", help="Hermes Agent integration")
+    p_hermes_sub = p_hermes.add_subparsers(dest="hermes_command")
+    p_hermes_install = p_hermes_sub.add_parser("install", help="Install neuro-skill as a Hermes pre_llm_call plugin")
+
     # rule — priority rules (bypass routing)
     p_rule = sub.add_parser("rule", help="Manage priority rules — pattern-matched skills override routing")
     p_rule_sub = p_rule.add_subparsers(dest="rule_command")
@@ -710,6 +822,8 @@ def main():
         cmd_setup(args)
     elif args.command == "rule":
         cmd_rule(args)
+    elif args.command == "hermes":
+        cmd_hermes(args)
     else:
         parser.print_help()
 

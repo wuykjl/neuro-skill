@@ -1,0 +1,9 @@
+# Hermes neuro-skill-router plugin manifest
+# Installed by: neuro-skill hermes install
+# Location: HERMES_HOME/plugins/neuro-skill-router/
+
+name: neuro-skill-router
+version: 0.8.0
+description: "Route 332+ skills via 5-signal RRF fusion — LLM only sees top-3"
+author: neuro-skill
+enabled: true
