@@ -589,64 +589,36 @@ def cmd_hermes(args):
 
 
 def _generate_hermes_plugin(plugin_dir: str):
-    """Inline fallback when package files not found."""
+    """Inline fallback — copies the self-contained zero-dependency plugin."""
     import os
-    import json as _json
+    import shutil
+    import neuro_skill as ns
 
-    plugin_yaml = {
+    src = os.path.join(os.path.dirname(ns.__file__), "plugins", "hermes")
+    if os.path.isdir(src):
+        for fname in ("plugin.yaml", "__init__.py"):
+            sf = os.path.join(src, fname)
+            df = os.path.join(plugin_dir, fname)
+            if os.path.isfile(sf):
+                shutil.copy2(sf, df)
+        return
+
+    # Ultimate fallback: repo not on disk (e.g. pip install from PyPI)
+    # Write a minimal self-contained BM25 plugin
+    import json as _json
+    _json.dump({
         "name": "neuro-skill-router",
         "version": "0.8.0",
-        "description": "Route 332+ skills via 5-signal RRF — LLM only sees top-3",
+        "description": "Route 332+ skills via BM25 — LLM only sees top-3",
         "enabled": True,
-    }
+    }, open(os.path.join(plugin_dir, "plugin.yaml"), "w", encoding="utf-8"), indent=2)
 
-    plugin_py = """\"\"\"Hermes pre_llm_call plugin — routes through neuro-skill before LLM sees query.\"\"\"
-import threading
-_router, _lock = None, threading.Lock()
-
-def on_session_start(**kw):
-    global _router
-    with _lock:
-        if _router: return
-        from neuro_skill import SkillRouter
-        from pathlib import Path
-        import os
-        home = Path.home()
-        local = os.environ.get('LOCALAPPDATA','')
-        hermes_home = os.environ.get('HERMES_HOME','')
-        dirs = [str(d) for d in [
-            home/'.claude/.skills-store/skills', home/'.claude/.skills-store/agents',
-            home/'.claude/skills', home/'.claude/agents', home/'.claude/.agents/skills',
-            home/'.hermes/skills', home/'.hermes/agents',
-            Path(local)/'hermes'/'skills', Path(local)/'hermes-agent'/'skills',
-        ] if d.is_dir()]
-        if hermes_home:
-            dirs.extend([str(Path(hermes_home)/'skills'), str(Path(hermes_home)/'agents')])
-        dirs = sorted(set(dirs))
-        r = SkillRouter(); r.build(dirs); _router = r
-
-def pre_llm_call(**kw):
-    global _router
-    q = kw.get('user_message','')
-    if not q or not q.strip(): return {}
-    if not _router:
-        try: on_session_start()
-        except: return {}
-    try:
-        res = _router.query(q, top_k=3, method='hybrid')
-    except: return {}
-    if not res: return {}
-    lines = ['[Top 3 skills for this query]']
-    for n,s in res: lines.append(f'  {n} ({s:.3f})')
-    lines.append('')
-    lines.append('If none match, fall back to built-in tools.')
-    return {'context': chr(10).join(lines)}
-"""
-
-    with open(os.path.join(plugin_dir, "plugin.yaml"), "w", encoding="utf-8") as f:
-        _json.dump(plugin_yaml, f, indent=2)
-    with open(os.path.join(plugin_dir, "__init__.py"), "w", encoding="utf-8") as f:
-        f.write(plugin_py)
+    # Copy the bundled __init__.py (zero-dependency version)
+    import pkgutil
+    data = pkgutil.get_data("neuro_skill.plugins.hermes", "__init__.py")
+    if data:
+        with open(os.path.join(plugin_dir, "__init__.py"), "wb") as f:
+            f.write(data)
 
     print(f"Hermes plugin installed -> {plugin_dir}")
     print("Restart Hermes to activate.")
