@@ -362,7 +362,14 @@ def hybrid(skills: list[dict], query: str,
     # A skill ranked top-5 by BM25 but poorly by graph (few/no neighbors)
     # gets a correction so unique specialties aren't drowned out by
     # consensus signals. Weight: BM25 ×2, cosine ×1, graph ×0.5.
-    weights = {"bm25": 2.0, "cosine": 1.0, "graph": 0.5}
+    weights = {"bm25": 1.0, "cosine": 1.0, "graph": 0.5}
+
+    # Suppress BM25 when it only covers a tiny fraction of skills
+    # (e.g., Chinese queries matching <10% of English-only search_texts).
+    # In that case BM25 is noise-dominated and should not drown out cosine.
+    bm25_coverage = float((s_bm25 > 0).sum()) / max(N, 1)
+    if bm25_coverage < 0.20:
+        weights["bm25"] = 0.2  # 5x reduction for sparse-coverage scenarios
 
     for label, rank_arr in [("bm25", rank_bm25), ("cosine", rank_cos), ("graph", rank_graph)]:
         if rank_arr.max() > rank_arr.min() or not np.allclose(rank_arr, 0):
