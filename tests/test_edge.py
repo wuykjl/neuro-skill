@@ -67,10 +67,15 @@ class TestSingleSkill:
 class TestBoundaryValues:
     def test_top_k_larger_than_N(self):
         """top_k > skill count should return all skills."""
-        skills = _mock_skills(5)
+        # Use distinct keywords so BM25 creates meaningful differentiation
+        # (identical search_text triggers quality gate: cos_gap=0 → no signal)
+        skills = [
+            {"name": f"skill-{i}", "search_text": f"unique word skill only this {i}"}
+            for i in range(5)
+        ]
         router = SkillRouter()
         router.build_from_skills(skills)
-        results = router.query("test", top_k=100)
+        results = router.query("unique word skill", top_k=100)
         assert len(results) == 5
 
     def test_top_k_zero(self):
