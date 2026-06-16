@@ -1,16 +1,19 @@
 """
-Hermes pre_llm_call plugin — self-contained skill router.
+Hermes pre_llm_call plugin — self-contained skill router with 5-layer pipeline.
 
-Zero external dependencies. BM25 + regex rules, ~200 lines.
-LLM sees only top-3 skills, not 332. 6-10ms per query.
+Zero external dependencies. BM25 + trigger phrase index + regex rules +
+Levenshtein fuzzy fallback + task gate — all in ~350 lines.
+LLM sees only top-3 skills, not 332. 2-10ms per query.
 
 Architecture (community-verified, 2026-06-15):
-  on_session_start → scan SKILL.md files → build in-memory index
-  pre_llm_call     → BM25 keyword match + rule check → inject top-3
-
-This file lives in Hermes repo. No dependency on neuro-skill package.
-The neuro-skill author can freely modify their code — this plugin is
-entirely self-contained.
+  on_session_start → scan SKILL.md files → build in-memory index + load triggers
+  pre_llm_call  →
+    1. Task Gate     → skip small talk ("thanks", "ok")
+    2. Trigger Match → O(1) exact phrase lookup
+    3. Rule Check    → regex priority rules (48 rules default)
+    4. BM25 Routing  → TF-IDF keyword ranking
+    5. Levenshtein   → typo-tolerant correction (when BM25 returns nothing)
+    All fail         → empty context (AI uses built-in tools)
 """
 
 import json
@@ -23,16 +26,14 @@ from pathlib import Path
 
 # ── Configuration ──
 
-# Skill directories to scan (auto-detected)
 _SKILL_DIRS_CACHE = None
-
-# Routes cache: skill_name → (full_path, name, search_text)
 _RouteIndex = None
 _RouteLock = threading.Lock()
-
-# Rules cache: pattern → skill_name
 _RulesCache = None
+_TriggerIndex = None
+_TriggerLock = threading.Lock()
 
+# ── Skill directory detection ──
 
 def _get_skill_dirs() -> list[str]:
     global _SKILL_DIRS_CACHE
@@ -63,7 +64,7 @@ def _get_skill_dirs() -> list[str]:
     return _SKILL_DIRS_CACHE
 
 
-# ── Skill File Discovery ──
+# ── Skill file discovery ──
 
 def _find_skill_files(dirs: list[str]) -> list[tuple[str, str, str]]:
     """Scan directories for SKILL.md and .md agent files.
@@ -104,7 +105,6 @@ def _find_skill_files(dirs: list[str]) -> list[tuple[str, str, str]]:
                 continue
             seen.add(name)
 
-            # search_text = name + description + first 500 chars of body
             search_text = f"{name} {description} {body[:500]}".lower()
             skills.append((name, description, search_text))
 
@@ -126,10 +126,9 @@ def _parse_frontmatter(text: str) -> tuple[dict, str]:
     return {}, text
 
 
-# ── BM25 Keyword Router ──
+# ── Tokenizer ──
 
 def _tokenize_set(text: str) -> set[str]:
-    """Split text into unique tokens: ASCII words + Chinese bigrams."""
     tokens = set()
     tokens.update(re.findall(r"[a-z0-9]{2,}", text.lower()))
     tokens.update(re.findall(r"[一-鿿]{2,6}", text.lower()))
@@ -137,12 +136,13 @@ def _tokenize_set(text: str) -> set[str]:
 
 
 def _tokenize_list(text: str) -> list[str]:
-    """Split text into token list (preserves duplicates for TF counting)."""
     text_lower = text.lower()
     tokens = re.findall(r"[a-z0-9]{2,}", text_lower)
     tokens.extend(re.findall(r"[一-鿿]{2,6}", text_lower))
     return tokens
 
+
+# ── BM25 Keyword Index ──
 
 class _KeywordIndex:
     """Minimal BM25 keyword index. No numpy needed."""
@@ -158,7 +158,6 @@ class _KeywordIndex:
             for t in token_set:
                 self._inverted.setdefault(t, []).append(i)
 
-        # IDF precompute
         N = len(skills)
         self._idf = {}
         for term, docs in self._inverted.items():
@@ -166,7 +165,6 @@ class _KeywordIndex:
 
     def query(self, text: str, top_k: int = 3,
               k1: float = 1.2, b: float = 0.75) -> list[tuple[str, float]]:
-        """Rank skills by BM25 relevance to query text."""
         q_tokens = _tokenize_set(text)
         if not q_tokens:
             return []
@@ -186,7 +184,6 @@ class _KeywordIndex:
                 denominator = tf + k1 * (1 - b + b * dl / avgdl)
                 scores[doc_idx] += idf * numerator / max(denominator, 0.01)
 
-        # Rank
         ranked = sorted(
             [(self.skills[i][0], scores[i]) for i in range(N) if scores[i] > 0],
             key=lambda x: -x[1],
@@ -197,7 +194,6 @@ class _KeywordIndex:
 # ── Rule Engine ──
 
 def _load_rules() -> list[dict]:
-    """Load priority rules from ~/.neuro-skill/rules.json."""
     global _RulesCache
     if _RulesCache is not None:
         return _RulesCache
@@ -213,7 +209,6 @@ def _load_rules() -> list[dict]:
 
 
 def _check_rules(query: str) -> str | None:
-    """Check if query matches a priority rule. Returns skill name or None."""
     rules = _load_rules()
     for rule in rules:
         pattern = rule.get("pattern", "")
@@ -227,10 +222,136 @@ def _check_rules(query: str) -> str | None:
     return None
 
 
+# ── Layer 1: Task Gate ──
+
+# Chinese + English small-talk / acknowledgment phrases that should
+# NOT trigger routing. These are conversational, not task-oriented.
+_TASK_GATE_SKIP = re.compile(
+    r"^(谢谢|好的|嗯|哦|OK|好|知道了|了解|明白|收到|thanks?|okay|got it|"
+    r"well done|great|nice|awesome|cool|讲得.*好|说得.*好|不错|可以|行|"
+    r"不客气|没关系|没.?事|不用.?谢|再见|拜拜|bye|hello|hi|hey|"
+    r"早上好|下午好|晚上好|good morning|good afternoon|good evening|"
+    r"晚安|good night|好梦|哈哈+|嘻嘻|嘿嘿|呵呵+|"
+    r"测试一下|test|测试)",
+    re.IGNORECASE
+)
+
+
+def _is_task_query(text: str) -> bool:
+    """Returns False for small talk / ack — router should skip these."""
+    # Strip punctuation for matching
+    t = re.sub(r"[!！。，,\.\s]+$", "", text.strip()).lower()
+    if len(t) <= 1:
+        return False
+    if _TASK_GATE_SKIP.fullmatch(t):
+        return False
+    if re.fullmatch(r"[\U0001F300-\U0001F9FF\U00002700-\U000027BF\W]+", t):
+        return False
+    return True
+
+
+# ── Layer 2: Trigger Phrase Index ──
+
+def _load_trigger_index():
+    """Load trigger phrase → skill_name mapping from trigger-index.json."""
+    global _TriggerIndex
+    with _TriggerLock:
+        if _TriggerIndex is not None:
+            return
+        _TriggerIndex = {}
+        # Search same directory as this file
+        trigger_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                     "trigger-index.json")
+        if not os.path.isfile(trigger_path):
+            # Fallback: check cwd
+            trigger_path = "trigger-index.json"
+        if not os.path.isfile(trigger_path):
+            return  # No trigger file — skip this layer
+        try:
+            with open(trigger_path, encoding="utf-8") as f:
+                idx = json.load(f)
+            for skill_name, phrases in idx.items():
+                for phrase in phrases:
+                    _TriggerIndex[phrase.lower().strip()] = skill_name
+        except Exception as e:
+            import logging
+            logging.getLogger("neuro_skill").warning(
+                "Failed to load trigger-index.json: %s", e
+            )
+
+
+def _trigger_match(query: str) -> str | None:
+    """O(1) exact trigger phrase lookup. Returns skill name or None."""
+    if _TriggerIndex is None:
+        return None
+    q = query.lower().strip()
+    # Direct lookup
+    if q in _TriggerIndex:
+        return _TriggerIndex[q]
+    # Substring match (for longer queries containing trigger phrases)
+    for phrase, skill in sorted(_TriggerIndex.items(),
+                                 key=lambda x: -len(x[0])):  # longest first
+        if phrase in q:
+            return skill
+    return None
+
+
+# ── Layer 5: Levenshtein Fuzzy Fallback ──
+
+def _levenshtein(s1: str, s2: str) -> int:
+    """Edit distance between two strings."""
+    if len(s1) < len(s2):
+        return _levenshtein(s2, s1)
+    if len(s2) == 0:
+        return len(s1)
+    prev = list(range(len(s2) + 1))
+    for i, c1 in enumerate(s1):
+        curr = [i + 1]
+        for j, c2 in enumerate(s2):
+            curr.append(min(
+                prev[j + 1] + 1,        # insertion
+                curr[j] + 1,             # deletion
+                prev[j] + (c1 != c2),   # substitution
+            ))
+        prev = curr
+    return prev[-1]
+
+
+def _fuzzy_keyword_correction(query: str, known_terms: set[str],
+                               max_dist: int = 2) -> str:
+    """Return query with misspelled keywords corrected via edit distance.
+
+    Only corrects terms that look like English words (>= 3 chars).
+    Each term is compared against known terms; the closest match within
+    max_dist is used as replacement.
+    """
+    words = re.findall(r"[a-z]{3,}", query.lower())
+    if not words:
+        return query
+
+    corrected = query.lower()
+    for w in set(words):
+        if w in known_terms:
+            continue
+        best = None
+        best_dist = max_dist + 1
+        for t in known_terms:
+            d = _levenshtein(w, t)
+            if d < best_dist:
+                best_dist = d
+                best = t
+                if d == 1:
+                    break  # early exit — good enough
+        if best:
+            corrected = corrected.replace(w, best)
+
+    return corrected
+
+
 # ── Hook Handlers ──
 
 def on_session_start(**kwargs):
-    """Scan skills and build BM25 index. ~500ms for 332 skills, one-time."""
+    """Scan skills + load trigger index. ~500ms for 332 skills, one-time."""
     global _RouteIndex
     with _RouteLock:
         if _RouteIndex is not None:
@@ -239,6 +360,7 @@ def on_session_start(**kwargs):
             dirs = _get_skill_dirs()
             skills = _find_skill_files(dirs)
             _RouteIndex = _KeywordIndex(skills)
+            _load_trigger_index()
         except Exception:
             import logging
             logging.getLogger("neuro_skill").warning(
@@ -247,18 +369,18 @@ def on_session_start(**kwargs):
 
 
 def pre_llm_call(**kwargs) -> dict:
-    """Route user query, return top-3 skills as context block.
-
-    Called before every LLM invocation by Hermes.
-    Injects {"context": str} into the LLM prompt.
-    """
-    global _RouteIndex
+    """5-layer routing pipeline. Returns {"context": str} for Hermes."""
+    global _RouteIndex, _TriggerIndex
 
     user_message = kwargs.get("user_message", "")
     if not user_message or not user_message.strip():
         return {}
 
-    # Build index on first call (backup if on_session_start didn't fire)
+    # ── Layer 0: Task Gate ──
+    if not _is_task_query(user_message):
+        return {}
+
+    # Build index on first call (fallback)
     if _RouteIndex is None:
         try:
             on_session_start()
@@ -268,30 +390,53 @@ def pre_llm_call(**kwargs) -> dict:
     if _RouteIndex is None:
         return {}
 
-    lines = ["[Top 3 skills for this query]"]
+    # ── Layer 1: Trigger Phrase Exact Match ──
+    trigger_skill = _trigger_match(user_message)
+    if trigger_skill:
+        return {"context": (
+            f"[Top 3 skills for this query]\n"
+            f"  (trigger-matched)\n"
+            f"  1. {trigger_skill} (1.000)\n"
+            f"\n"
+            f"Trigger phrase matched — use this skill."
+        )}
 
-    # Rule check (priority)
+    # ── Layer 2: Rule Check ──
     rule_match = _check_rules(user_message)
     if rule_match:
-        lines.insert(0, f"  (Rule: {rule_match})")
-        lines.append(f"  1. {rule_match} (1.000)")
-        lines.append("")
-        lines.append("Rule-matched — use this skill unless the query clearly needs something else.")
-        return {"context": "\n".join(lines)}
+        return {"context": (
+            f"[Top 3 skills for this query]\n"
+            f"  (Rule: {rule_match})\n"
+            f"  1. {rule_match} (1.000)\n"
+            f"\n"
+            f"Rule-matched — use this skill unless the query clearly needs something else."
+        )}
 
-    # BM25 routing
+    # ── Layer 3: BM25 Routing ──
+    results = []
     try:
         results = _RouteIndex.query(user_message, top_k=3)
     except Exception:
-        return {}
+        pass
 
+    # ── Layer 4: Levenshtein Fallback ──
     if not results:
-        lines.append("  (no strong match — use built-in tools)")
-        return {"context": "\n".join(lines)}
+        known = set(_RouteIndex._inverted.keys())
+        corrected = _fuzzy_keyword_correction(user_message, known)
+        if corrected != user_message.lower():
+            try:
+                results = _RouteIndex.query(corrected, top_k=3)
+            except Exception:
+                pass
 
+    # ── No match — let AI use built-in tools ──
+    if not results:
+        return {"context": "[Top 3 skills for this query]\n  (no strong match — use built-in tools)"}
+
+    # ── Build context block ──
+    lines = ["[Top 3 skills for this query]"]
     for i, (name, score) in enumerate(results):
         lines.append(f"  {i+1}. {name} ({score:.3f})")
-
     lines.append("")
     lines.append("If none match, fall back to built-in tools.")
 
