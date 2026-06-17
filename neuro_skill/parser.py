@@ -112,21 +112,30 @@ def load_skills(directories: list[str]) -> list[dict]:
         if not dp.exists():
             continue
 
-        # Single iterdir: covers flat .md, subdir SKILL.md, and symlink→SKILL.md
+        # Scan: flat .md, subdir SKILL.md, symlink→SKILL.md, AND nested subdirs
         md_files = set()
-        for item in dp.iterdir():
-            if item.is_symlink() and item.is_dir():
-                resolved = item.resolve()
-                smd = resolved / "SKILL.md"
-                if smd.is_file():
-                    md_files.add(smd)
-            elif item.is_file() and item.suffix == ".md":
-                md_files.add(item)
-            elif item.is_dir():
-                for sfx in ["SKILL.md", "skill.md"]:
-                    smd = item / sfx
+
+        def _scan_dir(dir_path: Path) -> None:
+            for item in dir_path.iterdir():
+                if item.is_symlink() and item.is_dir():
+                    resolved = item.resolve()
+                    smd = resolved / "SKILL.md"
                     if smd.is_file():
                         md_files.add(smd)
+                elif item.is_file() and item.suffix == ".md":
+                    md_files.add(item)
+                elif item.is_dir():
+                    # Direct SKILL.md in this subdir
+                    for sfx in ["SKILL.md", "skill.md"]:
+                        smd = item / sfx
+                        if smd.is_file():
+                            md_files.add(smd)
+                    # Also recurse ONE level deeper for nested skill dirs
+                    # (e.g. skills/ecc/ -> ai-regression-testing/SKILL.md)
+                    if not (item / "SKILL.md").exists() and not (item / "skill.md").exists():
+                        _scan_dir(item)
+
+        _scan_dir(dp)
 
         for f in sorted(md_files):
             info = parse_skill_file(f)
